@@ -1,0 +1,162 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ProjectStatus {
+  active
+  paused
+  archived
+}
+
+enum PromptType {
+  manager
+  stage
+  north_star
+  operations
+  role_specifics
+  planning_research
+  user_defined
+}
+
+enum ProjectRole {
+  owner
+  admin
+  editor
+  viewer
+}
+
+enum SourceControlProvider {
+  github
+}
+
+model Project {
+  id           String        @id @default(uuid())
+  title        String
+  description  String?
+  startStageId String
+  status       ProjectStatus @default(active)
+  createdAt    DateTime      @default(now())
+  lastUpdated  DateTime      @updatedAt
+
+  stages           Stage[]
+  validNextStages  ValidNextStage[]
+  prompts          Prompt[]
+  permissions      ProjectPermission[]
+  oauthConnections SourceControlOAuthConnection[]
+  repositories     SourceControlRepository[]
+  updates          ProjectUpdate[]
+}
+
+model Stage {
+  id                         String   @id @default(uuid())
+  projectId                  String
+  name                       String
+  promptId                   String
+  additionalContextPromptIds String[] @default([])
+  createdAt                  DateTime @default(now())
+  lastUpdated                DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  prompt  Prompt  @relation(fields: [projectId, promptId], references: [projectId, id])
+
+  validNextStagesFrom ValidNextStage[] @relation("ValidNextStageFrom")
+  validNextStagesTo   ValidNextStage[] @relation("ValidNextStageTo")
+  updates             ProjectUpdate[]
+
+  @@unique([projectId, id])
+  @@index([projectId])
+}
+
+model ValidNextStage {
+  id          String  @id @default(uuid())
+  projectId   String
+  fromStageId String
+  toStageId   String
+  description String?
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fromStage Stage   @relation("ValidNextStageFrom", fields: [projectId, fromStageId], references: [projectId, id], onDelete: Cascade)
+  toStage   Stage   @relation("ValidNextStageTo", fields: [projectId, toStageId], references: [projectId, id], onDelete: Cascade)
+
+  @@unique([projectId, fromStageId, toStageId])
+}
+
+model Prompt {
+  id          String     @id @default(uuid())
+  projectId   String
+  type        PromptType
+  title       String
+  prompt      String
+  createdAt   DateTime   @default(now())
+  lastUpdated DateTime   @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stages  Stage[]
+
+  @@unique([projectId, id])
+  @@index([projectId, type])
+}
+
+model ProjectPermission {
+  id          String      @id @default(uuid())
+  projectId   String
+  username    String
+  role        ProjectRole
+  createdAt   DateTime    @default(now())
+  lastUpdated DateTime    @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, username])
+}
+
+model SourceControlOAuthConnection {
+  id           String                @id @default(uuid())
+  projectId    String
+  provider     SourceControlProvider
+  username     String
+  encryptedAccessToken  String
+  encryptedRefreshToken String?
+  expiresAt    DateTime?
+  createdAt    DateTime              @default(now())
+  lastUpdated  DateTime              @updatedAt
+
+  project      Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  repositories SourceControlRepository[]
+
+  @@unique([projectId, id])
+  @@index([projectId, provider])
+}
+
+model SourceControlRepository {
+  id                String                @id @default(uuid())
+  projectId         String
+  oauthConnectionId String
+  provider          SourceControlProvider
+  url               String
+  createdAt         DateTime              @default(now())
+  lastUpdated       DateTime              @updatedAt
+
+  project         Project                      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  oauthConnection SourceControlOAuthConnection @relation(fields: [projectId, oauthConnectionId], references: [projectId, id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model ProjectUpdate {
+  id        String   @id @default(uuid())
+  projectId String
+  stageId   String?
+  summary   String
+  details   String?
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage   Stage?  @relation(fields: [projectId, stageId], references: [projectId, id], onDelete: Restrict)
+
+  @@index([projectId, createdAt])
+}

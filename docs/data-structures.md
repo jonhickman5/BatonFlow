@@ -139,3 +139,15 @@ type ProjectUpdate = {
   createdAt: string; // ISO datetime
 };
 ```
+
+## Database Mapping
+
+The Prisma schema stores stages, valid next-stage edges, prompts, permissions,
+source-control records, and updates as separate rows. The TypeScript `Project`
+shape embeds `stages` because that is the domain shape the UI and prompt
+generator need after loading a project.
+
+Project-scoped relations should remain project-scoped in the database. For
+example, a stage can only reference a prompt in the same project, a next-stage
+edge can only connect stages in the same project, and a repository can only use
+an OAuth connection from the same project.
