@@ -1,5 +1,21 @@
 export type ProjectStatus = "active" | "paused" | "archived";
 
+export type PlanType = "free" | "pro" | "team";
+
+export type EmailVerificationStatus = "unverified" | "pending" | "verified";
+
+export type UserAccount = {
+  id: string;
+  email: string;
+  normalizedEmail: string;
+  emailVerificationStatus: EmailVerificationStatus;
+  phoneNumber: string | null;
+  displayName: string | null;
+  planType: PlanType;
+  createdAt: string;
+  lastUpdated: string;
+};
+
 export type ValidNextStage = {
   stageId: string;
   description?: string;
@@ -48,7 +64,7 @@ export type ProjectRole = "owner" | "admin" | "editor" | "viewer";
 export type ProjectPermission = {
   id: string;
   projectId: string;
-  username: string;
+  userId: string;
   role: ProjectRole;
   createdAt: string;
   lastUpdated: string;
@@ -89,6 +105,10 @@ export type ProjectUpdate = {
 
 export const projectStatuses = ["active", "paused", "archived"] as const;
 
+export const planTypes = ["free", "pro", "team"] as const;
+
+export const emailVerificationStatuses = ["unverified", "pending", "verified"] as const;
+
 export const projectRoles = ["owner", "admin", "editor", "viewer"] as const;
 
 export const promptTypes = [
@@ -109,6 +129,15 @@ export function getValidNextStages(stage: Stage, allStages: Stage[]): Stage[] {
   const stageIds = new Set(stage.validNextStages.map((nextStage) => nextStage.stageId));
 
   return allStages.filter((candidate) => stageIds.has(candidate.id));
+}
+
+export function getUserAccountLabel(user: UserAccount): string {
+  const displayName = user.displayName?.trim();
+  return displayName || user.email;
+}
+
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 export function assertProjectHasValidStartStage(project: Project): void {

@@ -33,6 +33,32 @@ enum SourceControlProvider {
   github
 }
 
+enum EmailVerificationStatus {
+  unverified
+  pending
+  verified
+}
+
+enum PlanType {
+  free
+  pro
+  team
+}
+
+model UserAccount {
+  id                      String                  @id @default(uuid())
+  email                   String
+  normalizedEmail         String                  @unique
+  emailVerificationStatus EmailVerificationStatus @default(unverified)
+  phoneNumber             String?
+  displayName             String?
+  planType                PlanType                @default(free)
+  createdAt               DateTime                @default(now())
+  lastUpdated             DateTime                @updatedAt
+
+  permissions ProjectPermission[]
+}
+
 model Project {
   id           String        @id @default(uuid())
   title        String
@@ -104,14 +130,16 @@ model Prompt {
 model ProjectPermission {
   id          String      @id @default(uuid())
   projectId   String
-  username    String
+  userId      String
   role        ProjectRole
   createdAt   DateTime    @default(now())
   lastUpdated DateTime    @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([projectId, username])
+  @@unique([projectId, userId])
+  @@index([userId])
 }
 
 model SourceControlOAuthConnection {

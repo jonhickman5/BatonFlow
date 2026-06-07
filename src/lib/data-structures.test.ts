@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   assertProjectHasValidStartStage,
   getStartStage,
+  getUserAccountLabel,
   getValidNextStages,
+  normalizeEmail,
   summarizeProjectUpdate,
   type Project,
   type Stage,
+  type UserAccount,
 } from "./data-structures";
 
 const planningStage: Stage = {
@@ -43,6 +46,18 @@ const project: Project = {
   lastUpdated: "2026-06-07T00:00:00.000Z",
 };
 
+const userAccount: UserAccount = {
+  id: "user-1",
+  email: "jon@example.com",
+  normalizedEmail: "jon@example.com",
+  emailVerificationStatus: "verified",
+  phoneNumber: null,
+  displayName: "Jon",
+  planType: "free",
+  createdAt: "2026-06-07T00:00:00.000Z",
+  lastUpdated: "2026-06-07T00:00:00.000Z",
+};
+
 describe("data structures helpers", () => {
   it("finds the configured start stage", () => {
     expect(getStartStage(project)).toEqual(planningStage);
@@ -54,6 +69,22 @@ describe("data structures helpers", () => {
 
   it("returns valid next stages in project stage order", () => {
     expect(getValidNextStages(planningStage, project.stages)).toEqual([architectureStage]);
+  });
+
+  it("uses display name for user account labels when present", () => {
+    expect(getUserAccountLabel(userAccount)).toBe("Jon");
+  });
+
+  it("falls back to email for user account labels", () => {
+    expect(getUserAccountLabel({ ...userAccount, displayName: null })).toBe("jon@example.com");
+  });
+
+  it("falls back to email for blank display names", () => {
+    expect(getUserAccountLabel({ ...userAccount, displayName: "  " })).toBe("jon@example.com");
+  });
+
+  it("normalizes emails for account identity", () => {
+    expect(normalizeEmail(" Jon@Example.COM ")).toBe("jon@example.com");
   });
 
   it("enforces a valid start stage", () => {
