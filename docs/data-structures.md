@@ -6,6 +6,33 @@ connected tools such as GitHub. BatonFlow stores configuration for local
 manager/agent workflows, source-control access, permissions, and lightweight
 project updates posted by local runs.
 
+## User Account
+
+```ts
+type PlanType =
+  | "free"
+  | "pro"
+  | "team";
+
+type EmailVerificationStatus =
+  | "unverified"
+  | "pending"
+  | "verified";
+
+type UserAccount = {
+  id: string;
+  email: string;
+  normalizedEmail: string;
+  emailVerificationStatus: EmailVerificationStatus;
+  phoneNumber: string | null;
+  displayName: string | null;
+  planType: PlanType;
+
+  createdAt: string;    // ISO datetime
+  lastUpdated: string;  // ISO datetime
+};
+```
+
 ## Project
 
 ```ts
@@ -82,7 +109,7 @@ type ProjectRole =
 type ProjectPermission = {
   id: string;
   projectId: string;
-  username: string;
+  userId: string;
   role: ProjectRole;
 
   createdAt: string;    // ISO datetime
@@ -139,3 +166,19 @@ type ProjectUpdate = {
   createdAt: string; // ISO datetime
 };
 ```
+
+## Database Mapping
+
+The Prisma schema stores stages, valid next-stage edges, prompts, permissions,
+source-control records, and updates as separate rows. The TypeScript `Project`
+shape embeds `stages` because that is the domain shape the UI and prompt
+generator need after loading a project.
+
+Project-scoped relations should remain project-scoped in the database. For
+example, a stage can only reference a prompt in the same project, a next-stage
+edge can only connect stages in the same project, and a repository can only use
+an OAuth connection from the same project.
+
+User account uniqueness is enforced through `normalizedEmail`, which stores the
+trimmed lowercase email value. The display `email` can preserve user-facing
+formatting, but account lookup and uniqueness should use `normalizedEmail`.
