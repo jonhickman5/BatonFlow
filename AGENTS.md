@@ -47,3 +47,9 @@ Before presenting a PR as ready:
 ## Product Shape
 
 BatonFlow stores workflow configuration, prompt structure, permissions, source-control connection metadata, and lightweight project updates. Authoritative runtime workflow state should remain in GitHub/source control and connected work trackers.
+
+## UI Direction
+
+- BatonFlow UI design should mimic the theme of the V7 Go private equity and finance reference: https://land-book.com/websites/95006-v7-go-ai-for-private-equity-and-finance
+- Favor a minimal black-and-white SaaS/finance look, strong sans-serif typography, editorial confidence, generous whitespace, thin borders, and restrained interactive states.
+- Keep production surfaces polished and quiet rather than decorative; auth screens should feel finished, not placeholder-like.

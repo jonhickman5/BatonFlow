@@ -49,6 +49,7 @@ model UserAccount {
   id                      String                  @id @default(uuid())
   email                   String
   normalizedEmail         String                  @unique
+  passwordHash            String?
   emailVerificationStatus EmailVerificationStatus @default(unverified)
   phoneNumber             String?
   displayName             String?
@@ -57,6 +58,18 @@ model UserAccount {
   lastUpdated             DateTime                @updatedAt
 
   permissions ProjectPermission[]
+  sessions    UserSession[]
+}
+
+model UserSession {
+  id        String      @id @default(uuid())
+  tokenHash String      @unique
+  userId    String
+  user      UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
 }
 
 model Project {

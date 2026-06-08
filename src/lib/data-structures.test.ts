@@ -50,6 +50,7 @@ const userAccount: UserAccount = {
   id: "user-1",
   email: "jon@example.com",
   normalizedEmail: "jon@example.com",
+  passwordHash: "scrypt$16384$8$1$salt$hash",
   emailVerificationStatus: "verified",
   phoneNumber: null,
   displayName: "Jon",
