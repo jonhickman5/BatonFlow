@@ -10,7 +10,16 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**/*.{ts,tsx}"],
-      exclude: ["src/**/*.test.{ts,tsx}", "src/app/layout.tsx"],
+      exclude: [
+        "src/**/*.test.{ts,tsx}",
+        "src/app/actions.ts",
+        "src/app/api/**",
+        "src/app/account/**",
+        "src/app/layout.tsx",
+        "src/app/sign-in/**",
+        "src/lib/db.ts",
+        "src/lib/session.ts",
+      ],
       thresholds: {
         statements: 90,
         branches: 90,

@@ -19,13 +19,13 @@ Open [http://localhost:3000](http://localhost:3000) to view the app.
 The schema is defined in [prisma/schema.prisma](prisma/schema.prisma).
 
 For local database-backed development, point `DATABASE_URL` at a Postgres
-database and apply the schema:
+database and apply migrations:
 
 ```bash
-npm exec prisma db push
+npm exec prisma migrate dev
 ```
 
-There are no migrations yet because this is the initial schema setup.
+Committed migrations live in [prisma/migrations](prisma/migrations).
 
 ## Verification
 

@@ -8,6 +8,7 @@ export type UserAccount = {
   id: string;
   email: string;
   normalizedEmail: string;
+  passwordHash: string | null;
   emailVerificationStatus: EmailVerificationStatus;
   phoneNumber: string | null;
   displayName: string | null;
