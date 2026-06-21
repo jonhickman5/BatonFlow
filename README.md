@@ -14,6 +14,12 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) to view the app.
 
+Signed-in workflow projects are stored locally at `.data/batonflow-projects.json`
+by default. Set `BATONFLOW_PROJECT_STORE_PATH` to point the app at a different
+local JSON file while keeping the same persistence interface. This file contains
+manager bearer tokens for copied manager prompts and should be treated as local
+credential material.
+
 ## Database
 
 The schema is defined in [prisma/schema.prisma](prisma/schema.prisma).

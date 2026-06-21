@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { SignedInHome } from "@/app/home-ui";
+import { getProjectStore } from "@/lib/project-store";
+import { getCurrentUser } from "@/lib/session";
 
-export default function Home() {
+export function PublicLanding() {
   return (
     <main className="page-shell landing-shell">
       <header className="site-header">
@@ -38,5 +41,23 @@ export default function Home() {
         </div>
       </section>
     </main>
+  );
+}
+
+export default async function Home() {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    return <PublicLanding />;
+  }
+
+  const projects = await getProjectStore().listProjects(user.id);
+
+  return (
+    <SignedInHome
+      backendUrl={process.env.BATONFLOW_BACKEND_URL ?? "http://127.0.0.1:3000"}
+      projects={projects}
+      user={{ displayName: user.displayName, email: user.email }}
+    />
   );
 }

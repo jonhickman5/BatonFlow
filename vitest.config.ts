@@ -1,6 +1,11 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": new URL("./src", import.meta.url).pathname,
+    },
+  },
   test: {
     environment: "jsdom",
     globals: true,
@@ -14,6 +19,8 @@ export default defineConfig({
         "src/**/*.test.{ts,tsx}",
         "src/app/actions.ts",
         "src/app/api/**",
+        "src/app/home-ui.tsx",
+        "src/app/project-actions.ts",
         "src/app/account/**",
         "src/app/layout.tsx",
         "src/app/sign-in/**",

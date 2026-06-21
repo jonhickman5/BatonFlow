@@ -6,7 +6,7 @@ export default async function SignInPage() {
   const user = await getCurrentUser();
 
   if (user) {
-    redirect("/account");
+    redirect("/");
   }
 
   return <AuthPanel />;

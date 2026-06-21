@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   assertProjectHasValidStartStage,
+  buildManagerAgentPrompt,
+  buildManagerNextPrompt,
+  getWorkflowResourceSelectors,
   getStartStage,
   getUserAccountLabel,
   getValidNextStages,
   normalizeEmail,
+  selectNextWorkflowStage,
   summarizeProjectUpdate,
   type Project,
   type Stage,
   type UserAccount,
+  type WorkflowProject,
 } from "./data-structures";
 
 const planningStage: Stage = {
@@ -55,6 +60,78 @@ const userAccount: UserAccount = {
   phoneNumber: null,
   displayName: "Jon",
   planType: "free",
+  createdAt: "2026-06-07T00:00:00.000Z",
+  lastUpdated: "2026-06-07T00:00:00.000Z",
+};
+
+const workflowProject: WorkflowProject = {
+  id: "workflow-1",
+  ownerUserId: "user-1",
+  title: "BatonFlow",
+  objective: "Create a reliable manager-led workflow.",
+  globalInstructionsMarkdown: "# Global\n\nVerify every handoff.",
+  managerAgent: {
+    id: "manager-1",
+    name: "Manager",
+    projectId: "workflow-1",
+    accessToken: "bfm_test-token",
+    createdAt: "2026-06-07T00:00:00.000Z",
+    accessTokenUpdatedAt: "2026-06-07T00:00:00.000Z",
+  },
+  stages: [
+    {
+      id: "planning",
+      name: "Planning",
+      priority: 3,
+      instructionsMarkdown: "# Planning\n\nCreate a small issue queue.",
+      input: null,
+      output: {
+        kind: "github_issue",
+        status: "Open",
+        label: "Pending Architecture",
+        refillWhenAtOrBelow: 0,
+        holdWhenAtOrAbove: 3,
+      },
+    },
+    {
+      id: "implementation",
+      name: "Implementation",
+      priority: 1,
+      instructionsMarkdown: "# Implementation\n\nDeliver one issue.",
+      input: {
+        kind: "github_issue",
+        status: "Open",
+        label: "Pending Implementation",
+        minimumReady: 1,
+      },
+      output: {
+        kind: "github_pull_request",
+        status: "Open",
+        label: "Review",
+        refillWhenAtOrBelow: 0,
+        holdWhenAtOrAbove: 1,
+      },
+    },
+    {
+      id: "architecture",
+      name: "Architecture",
+      priority: 2,
+      instructionsMarkdown: "# Architecture\n\nWrite a technical plan.",
+      input: {
+        kind: "github_issue",
+        status: "Open",
+        label: "Pending Architecture",
+        minimumReady: 1,
+      },
+      output: {
+        kind: "github_issue",
+        status: "Open",
+        label: "Pending Implementation",
+        refillWhenAtOrBelow: 0,
+        holdWhenAtOrAbove: 1,
+      },
+    },
+  ],
   createdAt: "2026-06-07T00:00:00.000Z",
   lastUpdated: "2026-06-07T00:00:00.000Z",
 };
@@ -140,5 +217,75 @@ describe("data structures helpers", () => {
         project.stages,
       ),
     ).toBe("Manager cycle completed");
+  });
+
+  it("selects stages by priority while respecting output caps", () => {
+    expect(selectNextWorkflowStage(workflowProject)?.name).toBe("Planning");
+
+    expect(
+      selectNextWorkflowStage(workflowProject, {
+        "github_pull_request:open:review": 1,
+        "github_issue:open:pending implementation": 1,
+      })?.name,
+    ).toBe("Planning");
+  });
+
+  it("requires configured input before selecting an input-driven stage", () => {
+    expect(
+      selectNextWorkflowStage(workflowProject, {
+        "github_issue:open:pending architecture": 1,
+      })?.name,
+    ).toBe("Architecture");
+
+    expect(
+      selectNextWorkflowStage(workflowProject, {
+        "github_issue:open:pending implementation": 1,
+      })?.name,
+    ).toBe("Implementation");
+  });
+
+  it("deduplicates resource selectors needed for manager counts", () => {
+    expect(getWorkflowResourceSelectors(workflowProject).map((resource) => resource.label)).toEqual([
+      "Pending Architecture",
+      "Pending Implementation",
+      "Review",
+    ]);
+  });
+
+  it("builds a manager bootstrap prompt for the backend next endpoint", () => {
+    expect(buildManagerAgentPrompt(workflowProject, "http://localhost:3000/")).toContain(
+      "POST request to http://localhost:3000/api/projects/workflow-1/manager/next",
+    );
+    expect(buildManagerAgentPrompt(workflowProject)).toContain('"managerAgentId":"manager-1"');
+    expect(buildManagerAgentPrompt(workflowProject)).toContain('"resourceCounts"');
+  });
+
+  it("refuses to build a manager prompt without a durable access token", () => {
+    expect(() =>
+      buildManagerAgentPrompt({
+        ...workflowProject,
+        managerAgent: { ...workflowProject.managerAgent, accessToken: "" },
+      }),
+    ).toThrow("Manager access token is missing.");
+  });
+
+  it("builds the next manager prompt from project-wide and stage instructions", () => {
+    const nextPrompt = buildManagerNextPrompt(workflowProject, {
+      "github_pull_request:open:review": 1,
+      "github_issue:open:pending architecture": 1,
+    });
+
+    expect(nextPrompt.selectedStageName).toBe("Architecture");
+    expect(nextPrompt.prompt).toContain("Objective: Create a reliable manager-led workflow.");
+    expect(nextPrompt.prompt).toContain("# Global");
+    expect(nextPrompt.prompt).toContain("# Architecture");
+    expect(nextPrompt.prompt).toContain("do not run at or above 1");
+  });
+
+  it("builds a stop prompt when a project has no eligible stages", () => {
+    const nextPrompt = buildManagerNextPrompt({ ...workflowProject, stages: [] });
+
+    expect(nextPrompt.selectedStageId).toBeNull();
+    expect(nextPrompt.prompt).toContain("No eligible stage is configured");
   });
 });

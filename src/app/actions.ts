@@ -69,7 +69,7 @@ export async function createAccountAction(_previousState: AuthState, formData: F
     throw error;
   }
 
-  redirect("/account");
+  redirect("/");
 }
 
 export async function signInAction(_previousState: AuthState, formData: FormData) {
@@ -95,7 +95,7 @@ export async function signInAction(_previousState: AuthState, formData: FormData
   }
 
   await createSession(user.id);
-  redirect("/account");
+  redirect("/");
 }
 
 export async function signOutAction() {
