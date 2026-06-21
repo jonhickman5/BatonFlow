@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -65,6 +65,7 @@ describe("JsonFileProjectStore", () => {
     });
 
     await expect(readFile(storePath, "utf8")).resolves.toContain(project.id);
+    await expect(stat(storePath).then((fileStat) => fileStat.mode & 0o777)).resolves.toBe(0o600);
     await expect(store.listProjects("user-1")).resolves.toHaveLength(1);
     await expect(store.listProjects("user-2")).resolves.toHaveLength(1);
   });

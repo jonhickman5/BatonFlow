@@ -1,9 +1,12 @@
 "use server";
 
-import { Prisma } from "@prisma/client";
 import { redirect } from "next/navigation";
 import { isValidAccountEmail, normalizeAccountEmail } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import {
+  AuthStoreUnavailableError,
+  DuplicateAccountEmailError,
+  getAuthStore,
+} from "@/lib/auth-store";
 import { hashPassword, verifyPassword } from "@/lib/passwords";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { clearSession, createSession } from "@/lib/session";
@@ -16,9 +19,8 @@ function valueFrom(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
 }
 
-function isUniqueConstraintError(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
-}
+const AUTH_STORE_UNAVAILABLE_MESSAGE =
+  "Account storage is unavailable. Check the local auth store or database connection and try again.";
 
 export async function createAccountAction(_previousState: AuthState, formData: FormData) {
   const email = valueFrom(formData, "email");
@@ -43,27 +45,30 @@ export async function createAccountAction(_previousState: AuthState, formData: F
     return { error: "Passwords do not match." };
   }
 
-  const existingUser = await prisma.userAccount.findUnique({ where: { normalizedEmail } });
-
-  if (existingUser) {
-    return { error: "That email is already in use." };
-  }
-
   try {
-    const user = await prisma.userAccount.create({
-      data: {
-        email,
-        normalizedEmail,
-        displayName,
-        passwordHash: await hashPassword(password),
-        emailVerificationStatus: "unverified",
-      },
+    const authStore = getAuthStore();
+    const existingUser = await authStore.findUserByNormalizedEmail(normalizedEmail);
+
+    if (existingUser) {
+      return { error: "That email is already in use." };
+    }
+
+    const user = await authStore.createUser({
+      email,
+      normalizedEmail,
+      displayName,
+      passwordHash: await hashPassword(password),
+      emailVerificationStatus: "unverified",
     });
 
     await createSession(user.id);
   } catch (error) {
-    if (isUniqueConstraintError(error)) {
+    if (error instanceof DuplicateAccountEmailError) {
       return { error: "That email is already in use." };
+    }
+
+    if (error instanceof AuthStoreUnavailableError) {
+      return { error: AUTH_STORE_UNAVAILABLE_MESSAGE };
     }
 
     throw error;
@@ -88,13 +93,22 @@ export async function signInAction(_previousState: AuthState, formData: FormData
     return { error: "Too many sign-in attempts. Try again later." };
   }
 
-  const user = await prisma.userAccount.findUnique({ where: { normalizedEmail } });
+  try {
+    const user = await getAuthStore().findUserByNormalizedEmail(normalizedEmail);
 
-  if (!user?.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
-    return { error: "Invalid email or password." };
+    if (!user?.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
+      return { error: "Invalid email or password." };
+    }
+
+    await createSession(user.id);
+  } catch (error) {
+    if (error instanceof AuthStoreUnavailableError) {
+      return { error: AUTH_STORE_UNAVAILABLE_MESSAGE };
+    }
+
+    throw error;
   }
 
-  await createSession(user.id);
   redirect("/");
 }
 

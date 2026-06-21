@@ -14,11 +14,20 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) to view the app.
 
+Local development uses git-ignored JSON files by default so account creation and
+workflow setup work without a running Postgres server. Account records, password
+hashes, and sessions are stored at `.data/batonflow-auth.json`; workflow projects
+are stored at `.data/batonflow-projects.json`.
+
 Signed-in workflow projects are stored locally at `.data/batonflow-projects.json`
 by default. Set `BATONFLOW_PROJECT_STORE_PATH` to point the app at a different
 local JSON file while keeping the same persistence interface. This file contains
 manager bearer tokens for copied manager prompts and should be treated as local
 credential material.
+
+Set `BATONFLOW_AUTH_STORE=postgres` to use the Prisma/Postgres-backed auth
+store. Set `BATONFLOW_AUTH_STORE_PATH` to move the local auth JSON file. Both
+local JSON files contain credential material and must stay out of source control.
 
 ## Database
 

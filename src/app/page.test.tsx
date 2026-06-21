@@ -52,8 +52,8 @@ describe("Home", () => {
       phoneNumber: null,
       displayName: "Jon",
       planType: "free",
-      createdAt: new Date("2026-06-21T00:00:00.000Z"),
-      lastUpdated: new Date("2026-06-21T00:00:00.000Z"),
+      createdAt: "2026-06-21T00:00:00.000Z",
+      lastUpdated: "2026-06-21T00:00:00.000Z",
     });
 
     render(await Home());

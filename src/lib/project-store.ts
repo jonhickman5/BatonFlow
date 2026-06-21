@@ -303,7 +303,10 @@ export class JsonFileProjectStore implements ProjectStore {
     const temporaryPath = path.join(directory, `${path.basename(this.storePath)}.${randomUUID()}.tmp`);
 
     await mkdir(directory, { recursive: true });
-    await writeFile(temporaryPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+    await writeFile(temporaryPath, `${JSON.stringify(snapshot, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     await rename(temporaryPath, this.storePath);
   }
 }

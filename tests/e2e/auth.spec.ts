@@ -16,3 +16,39 @@ test("create account form uses email identity and shows live password mismatch",
   await expect(page.getByText("Passwords do not match.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Create account" })).toBeDisabled();
 });
+
+test("creates an account and lands on the signed-in home", async ({ page }) => {
+  const serverErrors: string[] = [];
+
+  page.on("response", (response) => {
+    if (response.status() >= 500) {
+      serverErrors.push(`${response.status()} ${response.url()}`);
+    }
+  });
+
+  await page.goto("/sign-in");
+  await page.getByRole("tab", { name: "Create account" }).click();
+
+  const email = `playwright-${Date.now()}@example.com`;
+
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Display name").fill("Playwright User");
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-battery-staple");
+  await page.getByLabel("Confirm password").fill("correct-horse-battery-staple");
+
+  const createAccountButton = page.getByRole("button", { name: "Create account" });
+  await expect(createAccountButton).toBeEnabled();
+  await createAccountButton.click();
+
+  await expect(page).toHaveURL("/");
+  await expect(page.getByRole("heading", { name: "Good to see you, Playwright User." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Workflow configuration" })).toBeVisible();
+
+  await page.context().clearCookies();
+  await page.goto("/sign-in");
+  await page.getByRole("tab", { name: "Create account" }).click();
+  await page.getByLabel("Email").fill(email);
+  await expect(page.getByText("An account with this email already exists.")).toBeVisible();
+
+  expect(serverErrors).toEqual([]);
+});
