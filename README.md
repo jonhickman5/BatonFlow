@@ -22,14 +22,21 @@ are stored at `.data/batonflow-projects.json`.
 Signed-in workflow projects are stored locally at `.data/batonflow-projects.json`
 by default. Set `BATONFLOW_PROJECT_STORE_PATH` to point the app at a different
 local JSON file while keeping the same persistence interface. This file contains
-manager bearer tokens and project-scoped GitHub access tokens for copied manager
-prompts and issue syncs. Treat it as local credential material.
+manager bearer tokens for copied manager prompts. GitHub OAuth connections are
+stored in the auth store, and projects keep only repository metadata for new
+connections. Treat both local data files as credential material.
+
+To enable repository selection, create a GitHub OAuth app and set
+`GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.env`. `GITHUB_REDIRECT_URI` is
+optional; when omitted, BatonFlow uses `/api/github/callback` on the configured
+backend URL. Users sign in to GitHub from BatonFlow, then choose from the
+repositories their connected account can access.
 
 Each project can be associated with one GitHub repository. BatonFlow uses the
-stored repository token server-side to sync open GitHub issues and pull
+connected GitHub account server-side to sync open GitHub issues and pull
 requests, compute stage eligibility from labels and status, and enforce
 configured work-in-progress caps. The copied manager prompt and browser UI only
-include the BatonFlow manager token; they do not expose the GitHub token.
+include the BatonFlow manager token; they do not expose the GitHub OAuth token.
 
 Manager agents call `POST /api/projects/:projectId/manager/next` to ask
 BatonFlow what to do next. BatonFlow syncs GitHub work items, blocks duplicate

@@ -42,6 +42,12 @@ test("creates an account and lands on the signed-in home", async ({ page }) => {
 
   await expect(page).toHaveURL("/");
   await expect(page.getByRole("heading", { name: "Good to see you, Playwright User." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "GitHub connection" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Sign in with GitHub" })).toHaveAttribute(
+    "href",
+    "/api/github/connect",
+  );
+  await expect(page.getByLabel("GitHub token")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Workflow configuration" })).toBeVisible();
 
   await page.context().clearCookies();

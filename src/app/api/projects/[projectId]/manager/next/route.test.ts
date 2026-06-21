@@ -1,8 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkflowProject } from "@/lib/data-structures";
+import { getAuthStore } from "@/lib/auth-store";
+import { fetchGitHubIssues } from "@/lib/github";
 import { getProjectStore } from "@/lib/project-store";
 import type { ProjectStore } from "@/lib/project-store";
 import { POST } from "./route";
+
+vi.mock("@/lib/auth-store", () => ({
+  getAuthStore: vi.fn(),
+}));
+
+vi.mock("@/lib/github", () => ({
+  fetchGitHubIssues: vi.fn(),
+}));
 
 vi.mock("@/lib/project-store", () => ({
   getProjectStore: vi.fn(),
@@ -119,6 +129,10 @@ function mockProjectStore(getProject = vi.fn().mockResolvedValue(workflowProject
 }
 
 describe("POST /api/projects/[projectId]/manager/next", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("returns a next prompt using runtime resource counts", async () => {
     const store = mockProjectStore();
 
@@ -140,6 +154,68 @@ describe("POST /api/projects/[projectId]/manager/next", () => {
         taskKey: "github_issue:1",
       }),
     );
+  });
+
+  it("syncs GitHub issues with the connected account token", async () => {
+    const projectWithRepository: WorkflowProject = {
+      ...workflowProject,
+      repository: {
+        provider: "github",
+        githubRepositoryId: 123,
+        owner: "jonhickman5",
+        name: "GameGlass",
+        fullName: "jonhickman5/GameGlass",
+        url: "https://github.com/jonhickman5/GameGlass",
+        defaultBranch: "main",
+        connectedAt: "2026-06-21T00:00:00.000Z",
+        lastSyncedAt: null,
+        syncError: null,
+      },
+    };
+    const syncedIssues = workflowProject.githubIssueCache.issues;
+    const syncedProject: WorkflowProject = {
+      ...projectWithRepository,
+      githubIssueCache: {
+        issues: syncedIssues,
+        syncedAt: "2026-06-21T00:01:00.000Z",
+        error: null,
+      },
+    };
+    const store = mockProjectStore(vi.fn().mockResolvedValue(projectWithRepository));
+
+    vi.mocked(getAuthStore).mockReturnValue({
+      findUserByNormalizedEmail: vi.fn(),
+      createUser: vi.fn(),
+      createSession: vi.fn(),
+      findSessionByTokenHash: vi.fn(),
+      deleteSessionByTokenHash: vi.fn(),
+      getGitHubConnection: vi.fn().mockResolvedValue({
+        userId: "user-1",
+        githubUserId: 123,
+        login: "jonhickman5",
+        name: "Jon",
+        avatarUrl: null,
+        accessToken: "connected-account-token",
+        tokenType: "bearer",
+        scope: "repo read:user user:email",
+        connectedAt: "2026-06-21T00:00:00.000Z",
+        lastUpdated: "2026-06-21T00:00:00.000Z",
+      }),
+      upsertGitHubConnection: vi.fn(),
+      deleteGitHubConnection: vi.fn(),
+    });
+    vi.mocked(fetchGitHubIssues).mockResolvedValue(syncedIssues);
+    vi.mocked(store.markStaleManagerCyclesForProject).mockResolvedValue(projectWithRepository);
+    vi.mocked(store.recordGitHubIssueSync).mockResolvedValue(syncedProject);
+
+    const response = await POST(request({ managerAgentId: "manager-1" }), context());
+
+    expect(response.status).toBe(200);
+    expect(fetchGitHubIssues).toHaveBeenCalledWith(
+      projectWithRepository.repository,
+      "connected-account-token",
+    );
+    expect(store.recordGitHubIssueSync).toHaveBeenCalledWith(projectWithRepository.id, syncedIssues);
   });
 
   it("rejects missing projects, wrong manager ids, missing counts, and invalid JSON", async () => {

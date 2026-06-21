@@ -66,9 +66,12 @@ export type UpdateWorkflowProjectInput = {
 };
 
 export type GitHubRepositoryInput = {
+  githubRepositoryId?: number;
   owner: string;
   name: string;
-  accessToken: string;
+  fullName?: string;
+  url?: string;
+  accessToken?: string;
   defaultBranch: string;
 };
 
@@ -217,7 +220,9 @@ function normalizeRepositoryInput(
 
   const owner = input?.owner.trim() ?? "";
   const name = input?.name.trim() ?? "";
-  const accessToken = input?.accessToken.trim() ?? "";
+  const fullName = input?.fullName?.trim() || (owner && name ? `${owner}/${name}` : "");
+  const url = input?.url?.trim() || (owner && name ? `https://github.com/${owner}/${name}` : "");
+  const accessToken = input?.accessToken?.trim() ?? "";
   const defaultBranch = input?.defaultBranch.trim() || currentRepository?.defaultBranch || "main";
 
   if (!owner && !name && !accessToken) {
@@ -228,17 +233,15 @@ function normalizeRepositoryInput(
     throw new Error("GitHub repository owner and name are required together.");
   }
 
-  if (!accessToken && !currentRepository?.accessToken) {
-    throw new Error("A GitHub access token is required to associate the repository.");
-  }
-
   return {
     provider: "github",
+    githubRepositoryId: input?.githubRepositoryId ?? currentRepository?.githubRepositoryId,
     owner,
     name,
-    url: `https://github.com/${owner}/${name}`,
+    fullName,
+    url,
     defaultBranch,
-    accessToken: accessToken || currentRepository?.accessToken || "",
+    accessToken: accessToken || currentRepository?.accessToken,
     connectedAt: currentRepository?.connectedAt ?? new Date().toISOString(),
     lastSyncedAt: currentRepository?.lastSyncedAt ?? null,
     syncError: currentRepository?.syncError ?? null,

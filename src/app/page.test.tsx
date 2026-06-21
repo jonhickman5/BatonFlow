@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Home, { PublicLanding } from "./page";
+import { getAuthStore } from "@/lib/auth-store";
+import { fetchGitHubRepositories } from "@/lib/github";
 import { getProjectStore } from "@/lib/project-store";
 import { getCurrentUser } from "@/lib/session";
 
@@ -12,11 +14,36 @@ vi.mock("@/lib/project-store", () => ({
   getProjectStore: vi.fn(),
 }));
 
+vi.mock("@/lib/auth-store", () => ({
+  getAuthStore: vi.fn(),
+}));
+
+vi.mock("@/lib/github", () => ({
+  fetchGitHubRepositories: vi.fn(),
+  getGitHubOAuthConfig: vi.fn(() => ({
+    clientId: "client-id",
+    clientSecret: "client-secret",
+    redirectUri: "http://127.0.0.1:3000/api/github/callback",
+  })),
+}));
+
 vi.mock("@/app/home-ui", () => ({
-  SignedInHome: ({ projects, user }: { projects: unknown[]; user: { email: string } }) => (
+  SignedInHome: ({
+    githubConnection,
+    githubRepositories,
+    projects,
+    user,
+  }: {
+    githubConnection: unknown;
+    githubRepositories: unknown[];
+    projects: unknown[];
+    user: { email: string };
+  }) => (
     <main>
       Signed-in workflow home for {user.email}
       <pre data-testid="signed-in-projects">{JSON.stringify(projects)}</pre>
+      <pre data-testid="github-connection">{JSON.stringify(githubConnection)}</pre>
+      <pre data-testid="github-repositories">{JSON.stringify(githubRepositories)}</pre>
     </main>
   ),
 }));
@@ -35,6 +62,17 @@ beforeEach(() => {
     markStaleManagerCyclesForProject: vi.fn(),
     markStaleManagerCyclesForOwner: vi.fn(),
   });
+  vi.mocked(getAuthStore).mockReturnValue({
+    findUserByNormalizedEmail: vi.fn(),
+    createUser: vi.fn(),
+    createSession: vi.fn(),
+    findSessionByTokenHash: vi.fn(),
+    deleteSessionByTokenHash: vi.fn(),
+    getGitHubConnection: vi.fn().mockResolvedValue(null),
+    upsertGitHubConnection: vi.fn(),
+    deleteGitHubConnection: vi.fn(),
+  });
+  vi.mocked(fetchGitHubRepositories).mockResolvedValue([]);
 });
 
 describe("Home", () => {
@@ -106,6 +144,37 @@ describe("Home", () => {
         lastUpdated: "2026-06-21T00:00:00.000Z",
       },
     ]);
+    vi.mocked(getAuthStore().getGitHubConnection).mockResolvedValue({
+      userId: "user-1",
+      githubUserId: 123,
+      login: "jonhickman5",
+      name: "Jon",
+      avatarUrl: null,
+      accessToken: "github-account-secret",
+      tokenType: "bearer",
+      scope: "repo read:user user:email",
+      connectedAt: "2026-06-21T00:00:00.000Z",
+      lastUpdated: "2026-06-21T00:00:00.000Z",
+    });
+    vi.mocked(fetchGitHubRepositories).mockResolvedValue([
+      {
+        id: 456,
+        owner: "jonhickman5",
+        name: "BatonFlow",
+        fullName: "jonhickman5/BatonFlow",
+        url: "https://github.com/jonhickman5/BatonFlow",
+        private: true,
+        defaultBranch: "main",
+        updatedAt: "2026-06-21T00:00:00.000Z",
+        permissions: {
+          admin: true,
+          maintain: true,
+          push: true,
+          triage: true,
+          pull: true,
+        },
+      },
+    ]);
 
     render(await Home());
 
@@ -114,6 +183,9 @@ describe("Home", () => {
     expect(getProjectStore().listProjects).toHaveBeenCalledWith("user-1");
     expect(screen.getByTestId("signed-in-projects")).not.toHaveTextContent("github-secret-token");
     expect(screen.getByTestId("signed-in-projects")).toHaveTextContent("hasAccessToken");
+    expect(screen.getByTestId("github-connection")).not.toHaveTextContent("github-account-secret");
+    expect(screen.getByTestId("github-connection")).toHaveTextContent("jonhickman5");
+    expect(screen.getByTestId("github-repositories")).toHaveTextContent("jonhickman5/BatonFlow");
   });
 
   it("renders the public landing from the default home route for guests", async () => {

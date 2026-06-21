@@ -3,7 +3,12 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import type { EmailVerificationStatus, PlanType, UserAccount } from "@/lib/data-structures";
+import type {
+  EmailVerificationStatus,
+  GitHubAccountConnection,
+  PlanType,
+  UserAccount,
+} from "@/lib/data-structures";
 
 const STORE_VERSION = 1;
 const DEFAULT_STORE_PATH = path.join(process.cwd(), ".data", "batonflow-auth.json");
@@ -21,6 +26,7 @@ type AuthStoreSnapshot = {
   version: typeof STORE_VERSION;
   users: UserAccount[];
   sessions: AuthSession[];
+  githubConnections: GitHubAccountConnection[];
   lastUpdated: string;
 };
 
@@ -38,6 +44,8 @@ export type CreateAuthSessionInput = {
   expiresAt: Date;
 };
 
+export type UpsertGitHubConnectionInput = Omit<GitHubAccountConnection, "connectedAt" | "lastUpdated">;
+
 export type AuthSessionWithUser = {
   expiresAt: Date;
   user: UserAccount;
@@ -49,6 +57,9 @@ export interface AuthStore {
   createSession(input: CreateAuthSessionInput): Promise<void>;
   findSessionByTokenHash(tokenHash: string): Promise<AuthSessionWithUser | null>;
   deleteSessionByTokenHash(tokenHash: string): Promise<void>;
+  getGitHubConnection(userId: string): Promise<GitHubAccountConnection | null>;
+  upsertGitHubConnection(input: UpsertGitHubConnectionInput): Promise<GitHubAccountConnection>;
+  deleteGitHubConnection(userId: string): Promise<void>;
 }
 
 export class DuplicateAccountEmailError extends Error {
@@ -69,6 +80,7 @@ function emptySnapshot(): AuthStoreSnapshot {
     version: STORE_VERSION,
     users: [],
     sessions: [],
+    githubConnections: [],
     lastUpdated: new Date().toISOString(),
   };
 }
@@ -97,6 +109,26 @@ function toAuthUser(user: {
     ...user,
     createdAt: user.createdAt.toISOString(),
     lastUpdated: user.lastUpdated.toISOString(),
+  };
+}
+
+function toGitHubConnection(connection: {
+  userId: string;
+  githubUserId: bigint | number;
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  accessToken: string;
+  tokenType: string;
+  scope: string;
+  connectedAt: Date;
+  lastUpdated: Date;
+}): GitHubAccountConnection {
+  return {
+    ...connection,
+    githubUserId: Number(connection.githubUserId),
+    connectedAt: connection.connectedAt.toISOString(),
+    lastUpdated: connection.lastUpdated.toISOString(),
   };
 }
 
@@ -170,6 +202,46 @@ export class PrismaAuthStore implements AuthStore {
   async deleteSessionByTokenHash(tokenHash: string): Promise<void> {
     try {
       await prisma.userSession.deleteMany({ where: { tokenHash } });
+    } catch (error) {
+      mapPrismaError(error);
+    }
+  }
+
+  async getGitHubConnection(userId: string): Promise<GitHubAccountConnection | null> {
+    try {
+      const connection = await prisma.userGitHubConnection.findUnique({ where: { userId } });
+
+      return connection ? toGitHubConnection(connection) : null;
+    } catch (error) {
+      mapPrismaError(error);
+    }
+  }
+
+  async upsertGitHubConnection(input: UpsertGitHubConnectionInput): Promise<GitHubAccountConnection> {
+    try {
+      const connection = await prisma.userGitHubConnection.upsert({
+        where: { userId: input.userId },
+        create: input,
+        update: {
+          githubUserId: input.githubUserId,
+          login: input.login,
+          name: input.name,
+          avatarUrl: input.avatarUrl,
+          accessToken: input.accessToken,
+          tokenType: input.tokenType,
+          scope: input.scope,
+        },
+      });
+
+      return toGitHubConnection(connection);
+    } catch (error) {
+      mapPrismaError(error);
+    }
+  }
+
+  async deleteGitHubConnection(userId: string): Promise<void> {
+    try {
+      await prisma.userGitHubConnection.deleteMany({ where: { userId } });
     } catch (error) {
       mapPrismaError(error);
     }
@@ -262,6 +334,52 @@ export class JsonFileAuthStore implements AuthStore {
     });
   }
 
+  async getGitHubConnection(userId: string): Promise<GitHubAccountConnection | null> {
+    const snapshot = await this.readSnapshot();
+
+    return snapshot.githubConnections.find((connection) => connection.userId === userId) ?? null;
+  }
+
+  async upsertGitHubConnection(input: UpsertGitHubConnectionInput): Promise<GitHubAccountConnection> {
+    return this.enqueueMutation(async () => {
+      const snapshot = await this.readSnapshot();
+      const now = new Date().toISOString();
+      const existingConnectionIndex = snapshot.githubConnections.findIndex(
+        (connection) => connection.userId === input.userId,
+      );
+      const existingConnection =
+        existingConnectionIndex >= 0 ? snapshot.githubConnections[existingConnectionIndex] : null;
+      const connection: GitHubAccountConnection = {
+        ...input,
+        connectedAt: existingConnection?.connectedAt ?? now,
+        lastUpdated: now,
+      };
+
+      if (existingConnectionIndex >= 0) {
+        snapshot.githubConnections[existingConnectionIndex] = connection;
+      } else {
+        snapshot.githubConnections.push(connection);
+      }
+
+      snapshot.lastUpdated = now;
+      await this.writeSnapshot(snapshot);
+
+      return connection;
+    });
+  }
+
+  async deleteGitHubConnection(userId: string): Promise<void> {
+    await this.enqueueMutation(async () => {
+      const snapshot = await this.readSnapshot();
+
+      snapshot.githubConnections = snapshot.githubConnections.filter(
+        (connection) => connection.userId !== userId,
+      );
+      snapshot.lastUpdated = new Date().toISOString();
+      await this.writeSnapshot(snapshot);
+    });
+  }
+
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
     const previousWrite = writeQueues.get(this.storePath) ?? Promise.resolve();
     const nextWrite = previousWrite.catch(() => undefined).then(operation);
@@ -284,7 +402,10 @@ export class JsonFileAuthStore implements AuthStore {
         throw new Error(`Unsupported BatonFlow auth store version in ${this.storePath}.`);
       }
 
-      return snapshot;
+      return {
+        ...snapshot,
+        githubConnections: Array.isArray(snapshot.githubConnections) ? snapshot.githubConnections : [],
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return emptySnapshot();

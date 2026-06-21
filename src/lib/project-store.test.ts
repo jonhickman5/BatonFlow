@@ -242,7 +242,7 @@ describe("JsonFileProjectStore", () => {
     expect(project.settings.staleAgentMinutes).toBe(90);
   });
 
-  it("associates exactly one GitHub repository and preserves tokens on update", async () => {
+  it("associates exactly one GitHub repository and preserves legacy tokens on update", async () => {
     const { store } = await createStore();
     const project = await store.createProject({
       ownerUserId: "user-1",
@@ -316,21 +316,27 @@ describe("JsonFileProjectStore", () => {
       }),
     ).rejects.toThrow("GitHub repository owner and name are required together.");
 
-    await expect(
-      store.createProject({
-        ownerUserId: "user-1",
-        title: "BatonFlow",
-        objective: "Coordinate autonomous project work.",
-        globalInstructionsMarkdown: "# Global",
-        repository: {
-          owner: "jonhickman5",
-          name: "BatonFlow",
-          defaultBranch: "main",
-          accessToken: "",
-        },
-        stages: [stageInput()],
-      }),
-    ).rejects.toThrow("A GitHub access token is required");
+    const tokenlessProject = await store.createProject({
+      ownerUserId: "user-1",
+      title: "BatonFlow",
+      objective: "Coordinate autonomous project work.",
+      globalInstructionsMarkdown: "# Global",
+      repository: {
+        githubRepositoryId: 123,
+        owner: "jonhickman5",
+        name: "BatonFlow",
+        fullName: "jonhickman5/BatonFlow",
+        url: "https://github.com/jonhickman5/BatonFlow",
+        defaultBranch: "main",
+      },
+      stages: [stageInput()],
+    });
+
+    expect(tokenlessProject.repository).toMatchObject({
+      githubRepositoryId: 123,
+      fullName: "jonhickman5/BatonFlow",
+      accessToken: undefined,
+    });
   });
 
   it("records GitHub issue syncs and recomputes stage eligibility", async () => {

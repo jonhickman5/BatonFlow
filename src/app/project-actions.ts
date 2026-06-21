@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { getAuthStore } from "@/lib/auth-store";
+import { fetchGitHubRepositories } from "@/lib/github";
 import { getProjectStore } from "@/lib/project-store";
 import type { GitHubRepositoryInput, WorkflowProjectSettingsInput, WorkflowStageInput } from "@/lib/project-store";
 import { getCurrentUser } from "@/lib/session";
@@ -42,21 +44,40 @@ function numberFrom(formData: FormData, key: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function repositoryFrom(formData: FormData): GitHubRepositoryInput | null {
-  const owner = valueFrom(formData, "repositoryOwner");
-  const name = valueFrom(formData, "repositoryName");
-  const accessToken = valueFrom(formData, "repositoryAccessToken");
-  const defaultBranch = valueFrom(formData, "repositoryDefaultBranch") || "main";
+async function repositoryFrom(
+  formData: FormData,
+  userId: string,
+): Promise<GitHubRepositoryInput | null | undefined> {
+  if (!formData.has("repositoryFullName")) {
+    return undefined;
+  }
 
-  if (!owner && !name && !accessToken) {
+  const repositoryFullName = valueFrom(formData, "repositoryFullName");
+
+  if (!repositoryFullName) {
     return null;
   }
 
+  const connection = await getAuthStore().getGitHubConnection(userId);
+
+  if (!connection) {
+    throw new Error("Connect your GitHub account before attaching a repository.");
+  }
+
+  const repositories = await fetchGitHubRepositories(connection.accessToken);
+  const selectedRepository = repositories.find((repository) => repository.fullName === repositoryFullName);
+
+  if (!selectedRepository) {
+    throw new Error("Select a repository from your connected GitHub account.");
+  }
+
   return {
-    owner,
-    name,
-    accessToken,
-    defaultBranch,
+    githubRepositoryId: selectedRepository.id,
+    owner: selectedRepository.owner,
+    name: selectedRepository.name,
+    fullName: selectedRepository.fullName,
+    url: selectedRepository.url,
+    defaultBranch: selectedRepository.defaultBranch,
   };
 }
 
@@ -85,7 +106,7 @@ export async function createWorkflowProjectAction(
       title: valueFrom(formData, "title"),
       objective: valueFrom(formData, "objective"),
       globalInstructionsMarkdown: config.globalInstructionsMarkdown ?? "",
-      repository: repositoryFrom(formData),
+      repository: await repositoryFrom(formData, user.id),
       settings: settingsFrom(formData),
       stages: config.stages ?? [],
     });
@@ -118,7 +139,7 @@ export async function updateWorkflowProjectAction(
       title: valueFrom(formData, "title"),
       objective: valueFrom(formData, "objective"),
       globalInstructionsMarkdown: config.globalInstructionsMarkdown ?? "",
-      repository: repositoryFrom(formData),
+      repository: await repositoryFrom(formData, user.id),
       settings: settingsFrom(formData),
       stages: config.stages ?? [],
     });

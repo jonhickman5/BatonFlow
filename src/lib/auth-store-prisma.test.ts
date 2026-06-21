@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const dbMocks = vi.hoisted(() => ({
   userAccountCreate: vi.fn(),
   userAccountFindUnique: vi.fn(),
+  userGitHubConnectionDeleteMany: vi.fn(),
+  userGitHubConnectionFindUnique: vi.fn(),
+  userGitHubConnectionUpsert: vi.fn(),
   userSessionCreate: vi.fn(),
   userSessionDeleteMany: vi.fn(),
   userSessionFindUnique: vi.fn(),
@@ -19,6 +22,11 @@ vi.mock("@/lib/db", () => ({
       create: dbMocks.userSessionCreate,
       deleteMany: dbMocks.userSessionDeleteMany,
       findUnique: dbMocks.userSessionFindUnique,
+    },
+    userGitHubConnection: {
+      deleteMany: dbMocks.userGitHubConnectionDeleteMany,
+      findUnique: dbMocks.userGitHubConnectionFindUnique,
+      upsert: dbMocks.userGitHubConnectionUpsert,
     },
   },
 }));
@@ -52,6 +60,19 @@ const createUserInput: CreateAuthUserInput = {
   displayName: "Test User",
   passwordHash: "hash",
   emailVerificationStatus: "unverified",
+};
+const prismaGitHubConnection = {
+  id: "github-connection-1",
+  userId: "user-1",
+  githubUserId: BigInt(123),
+  login: "jonhickman5",
+  name: "Jon",
+  avatarUrl: "https://avatars.githubusercontent.com/u/123",
+  accessToken: "github-token",
+  tokenType: "bearer",
+  scope: "repo read:user user:email",
+  connectedAt: createdAt,
+  lastUpdated,
 };
 
 function knownPrismaError(code: string) {
@@ -117,6 +138,47 @@ describe("PrismaAuthStore", () => {
     dbMocks.userSessionDeleteMany.mockResolvedValueOnce({ count: 1 });
     await expect(store.deleteSessionByTokenHash("token-hash")).resolves.toBeUndefined();
     expect(dbMocks.userSessionDeleteMany).toHaveBeenCalledWith({ where: { tokenHash: "token-hash" } });
+  });
+
+  it("gets, upserts, and deletes GitHub connections", async () => {
+    dbMocks.userGitHubConnectionFindUnique
+      .mockResolvedValueOnce(prismaGitHubConnection)
+      .mockResolvedValueOnce(null);
+
+    await expect(store.getGitHubConnection("user-1")).resolves.toMatchObject({
+      userId: "user-1",
+      githubUserId: 123,
+      login: "jonhickman5",
+      connectedAt: "2026-06-21T12:00:00.000Z",
+    });
+    expect(dbMocks.userGitHubConnectionFindUnique).toHaveBeenCalledWith({ where: { userId: "user-1" } });
+    await expect(store.getGitHubConnection("missing")).resolves.toBeNull();
+
+    dbMocks.userGitHubConnectionUpsert.mockResolvedValueOnce(prismaGitHubConnection);
+
+    await expect(
+      store.upsertGitHubConnection({
+        userId: "user-1",
+        githubUserId: 123,
+        login: "jonhickman5",
+        name: "Jon",
+        avatarUrl: "https://avatars.githubusercontent.com/u/123",
+        accessToken: "github-token",
+        tokenType: "bearer",
+        scope: "repo read:user user:email",
+      }),
+    ).resolves.toMatchObject({ login: "jonhickman5" });
+    expect(dbMocks.userGitHubConnectionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-1" },
+        create: expect.objectContaining({ accessToken: "github-token" }),
+        update: expect.objectContaining({ accessToken: "github-token" }),
+      }),
+    );
+
+    dbMocks.userGitHubConnectionDeleteMany.mockResolvedValueOnce({ count: 1 });
+    await expect(store.deleteGitHubConnection("user-1")).resolves.toBeUndefined();
+    expect(dbMocks.userGitHubConnectionDeleteMany).toHaveBeenCalledWith({ where: { userId: "user-1" } });
   });
 
   it("maps unavailable Prisma errors", async () => {

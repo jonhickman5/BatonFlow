@@ -1,7 +1,12 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SignedInHome } from "./home-ui";
-import { sanitizeWorkflowProjectForClient, type WorkflowProject } from "@/lib/data-structures";
+import {
+  sanitizeWorkflowProjectForClient,
+  type ClientGitHubAccountConnection,
+  type GitHubRepositorySummary,
+  type WorkflowProject,
+} from "@/lib/data-structures";
 
 vi.mock("@/app/actions", () => ({
   signOutAction: vi.fn(),
@@ -142,6 +147,37 @@ const workflowProject: WorkflowProject = {
   lastUpdated: "2026-06-21T00:00:00.000Z",
 };
 const sanitizedWorkflowProject = sanitizeWorkflowProjectForClient(workflowProject);
+const githubConnection: ClientGitHubAccountConnection = {
+  userId: "user-1",
+  githubUserId: 123,
+  login: "jonhickman5",
+  name: "Jon Hickman",
+  avatarUrl: "https://avatars.githubusercontent.com/u/123",
+  tokenType: "bearer",
+  scope: "repo read:user user:email",
+  scopes: ["repo", "read:user", "user:email"],
+  connectedAt: "2026-06-21T00:00:00.000Z",
+  lastUpdated: "2026-06-21T00:00:00.000Z",
+};
+const githubRepositories: GitHubRepositorySummary[] = [
+  {
+    id: 101,
+    owner: "jonhickman5",
+    name: "GameGlass",
+    fullName: "jonhickman5/GameGlass",
+    url: "https://github.com/jonhickman5/GameGlass",
+    private: true,
+    defaultBranch: "main",
+    updatedAt: "2026-06-21T00:00:00.000Z",
+    permissions: {
+      admin: true,
+      maintain: true,
+      push: true,
+      triage: true,
+      pull: true,
+    },
+  },
+];
 
 beforeEach(() => {
   Object.defineProperty(navigator, "clipboard", {
@@ -157,6 +193,10 @@ describe("SignedInHome", () => {
     render(
       <SignedInHome
         backendUrl="http://127.0.0.1:3000"
+        githubConnection={null}
+        githubOAuthConfigured={true}
+        githubRepositories={[]}
+        githubRepositoryError={null}
         projects={[]}
         user={{ displayName: "Jon", email: "jon@example.com" }}
       />,
@@ -166,6 +206,11 @@ describe("SignedInHome", () => {
     expect(screen.getByLabelText("Project name")).toBeInTheDocument();
     expect(screen.getByText("global-instructions.md")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Planning stage" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in with GitHub" })).toHaveAttribute(
+      "href",
+      "/api/github/connect",
+    );
+    expect(screen.queryByLabelText("GitHub token")).not.toBeInTheDocument();
     expect(screen.getByText("No projects yet")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Add stage" }));
@@ -177,6 +222,10 @@ describe("SignedInHome", () => {
     render(
       <SignedInHome
         backendUrl="http://localhost:3000"
+        githubConnection={githubConnection}
+        githubOAuthConfigured={true}
+        githubRepositories={githubRepositories}
+        githubRepositoryError={null}
         projects={[sanitizedWorkflowProject]}
         user={{ displayName: null, email: "jon@example.com" }}
       />,
@@ -191,6 +240,10 @@ describe("SignedInHome", () => {
     expect(card.getByRole("heading", { name: "GameGlass" })).toBeInTheDocument();
     expect(card.getAllByText("1. Implementation").length).toBeGreaterThan(0);
     expect(card.getByText("jonhickman5/GameGlass")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Connected as jonhickman5" })).toBeInTheDocument();
+    expect(screen.getAllByRole("combobox", { name: "GitHub repository" })[1]).toHaveValue(
+      "jonhickman5/GameGlass",
+    );
     expect(card.getAllByText(/Implement repository dashboard/).length).toBeGreaterThan(0);
     expect(card.getAllByText("Subagent crashed.").length).toBeGreaterThan(0);
     expect(card.getByText("Implementation subagent")).toBeInTheDocument();

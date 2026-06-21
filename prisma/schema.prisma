@@ -59,6 +59,7 @@ model UserAccount {
 
   permissions ProjectPermission[]
   sessions    UserSession[]
+  githubConnection UserGitHubConnection?
 }
 
 model UserSession {
@@ -70,6 +71,24 @@ model UserSession {
   expiresAt DateTime
 
   @@index([userId])
+}
+
+model UserGitHubConnection {
+  id           String      @id @default(uuid())
+  userId       String      @unique
+  user         UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  githubUserId BigInt
+  login        String
+  name         String?
+  avatarUrl    String?
+  accessToken  String
+  tokenType    String
+  scope        String
+  connectedAt  DateTime    @default(now())
+  lastUpdated  DateTime    @updatedAt
+
+  @@index([githubUserId])
+  @@index([login])
 }
 
 model Project {

@@ -5,6 +5,7 @@ import {
   getActiveManagerCycles,
   workflowResourceCountsFromIssues,
 } from "@/lib/data-structures";
+import { getAuthStore } from "@/lib/auth-store";
 import { fetchGitHubIssues } from "@/lib/github";
 import { getProjectStore } from "@/lib/project-store";
 
@@ -84,7 +85,9 @@ export async function POST(request: Request, context: { params: Promise<{ projec
 
   if (nextProject.repository) {
     try {
-      const issues = await fetchGitHubIssues(nextProject.repository);
+      const githubConnection = await getAuthStore().getGitHubConnection(nextProject.ownerUserId);
+      const accessToken = githubConnection?.accessToken ?? nextProject.repository.accessToken ?? "";
+      const issues = await fetchGitHubIssues(nextProject.repository, accessToken);
 
       nextProject = await store.recordGitHubIssueSync(nextProject.id, issues);
     } catch (error) {

@@ -14,7 +14,9 @@ import {
 } from "@/lib/data-structures";
 import type {
   ClientWorkflowProject,
+  ClientGitHubAccountConnection,
   GitHubIssueSnapshot,
+  GitHubRepositorySummary,
   WorkflowInputRule,
   WorkflowManagerCycle,
   WorkflowOutputRule,
@@ -31,6 +33,10 @@ import type { ProjectActionState } from "@/app/project-actions";
 
 type SignedInHomeProps = {
   backendUrl: string;
+  githubConnection: ClientGitHubAccountConnection | null;
+  githubOAuthConfigured: boolean;
+  githubRepositories: GitHubRepositorySummary[];
+  githubRepositoryError: string | null;
   projects: ClientWorkflowProject[];
   user: {
     email: string;
@@ -43,6 +49,12 @@ type StageEditorProps = {
   onChange: (stage: WorkflowStageDefinition) => void;
   onRemove: () => void;
   stage: WorkflowStageDefinition;
+};
+
+type RepositoryPickerProps = {
+  currentRepositoryFullName?: string | null;
+  disabled?: boolean;
+  repositories: GitHubRepositorySummary[];
 };
 
 const initialActionState: ProjectActionState = {};
@@ -357,7 +369,13 @@ function StageEditor({ canRemove, onChange, onRemove, stage }: StageEditorProps)
   );
 }
 
-function ProjectForm() {
+function ProjectForm({
+  githubConnection,
+  githubRepositories,
+}: {
+  githubConnection: ClientGitHubAccountConnection | null;
+  githubRepositories: GitHubRepositorySummary[];
+}) {
   const [actionState, formAction] = useActionState(createWorkflowProjectAction, initialActionState);
   const [globalInstructionsMarkdown, setGlobalInstructionsMarkdown] =
     useState(defaultGlobalInstructions);
@@ -394,29 +412,10 @@ function ProjectForm() {
 
       <fieldset className="rule-fieldset">
         <legend>GitHub repository</legend>
-        <div className="compact-grid">
-          <label>
-            <span>Owner</span>
-            <input name="repositoryOwner" placeholder="jonhickman5" />
-          </label>
-          <label>
-            <span>Repository</span>
-            <input name="repositoryName" placeholder="GameGlass" />
-          </label>
-          <label>
-            <span>Default branch</span>
-            <input defaultValue="main" name="repositoryDefaultBranch" />
-          </label>
-          <label>
-            <span>GitHub token</span>
-            <input
-              autoComplete="off"
-              name="repositoryAccessToken"
-              placeholder="Fine-grained token with Issues read access"
-              type="password"
-            />
-          </label>
-        </div>
+        <RepositoryPicker
+          disabled={!githubConnection || githubRepositories.length === 0}
+          repositories={githubRepositories}
+        />
       </fieldset>
 
       <fieldset className="rule-fieldset">
@@ -478,6 +477,83 @@ function DashboardMetric({ label, value }: { label: string; value: string | numb
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function GitHubConnectionPanel({
+  connection,
+  oauthConfigured,
+  repositoryError,
+}: {
+  connection: ClientGitHubAccountConnection | null;
+  oauthConfigured: boolean;
+  repositoryError: string | null;
+}) {
+  return (
+    <section className="dashboard-panel github-connect-panel" aria-label="GitHub account connection">
+      <div className="dashboard-panel-heading">
+        <p className="eyebrow">GitHub</p>
+        <h3>{connection ? `Connected as ${connection.login}` : "Connect GitHub"}</h3>
+      </div>
+      {connection ? (
+        <div className="github-account-row">
+          <span className="github-avatar" aria-hidden="true">
+            {(connection.name || connection.login).charAt(0).toUpperCase()}
+          </span>
+          <div>
+            <strong>{connection.name || connection.login}</strong>
+            <span>Scopes: {connection.scopes.join(", ") || "none reported"}</span>
+          </div>
+          <form action="/api/github/disconnect" method="post">
+            <button type="submit" className="secondary-button">
+              Disconnect
+            </button>
+          </form>
+        </div>
+      ) : oauthConfigured ? (
+        <a className="primary-button" href="/api/github/connect">
+          Sign in with GitHub
+        </a>
+      ) : (
+        <p className="form-error">
+          GitHub OAuth is not configured. Add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET to the
+          server environment.
+        </p>
+      )}
+      {repositoryError ? <p className="form-error">Could not load repositories: {repositoryError}</p> : null}
+    </section>
+  );
+}
+
+function RepositoryPicker({
+  currentRepositoryFullName,
+  disabled = false,
+  repositories,
+}: RepositoryPickerProps) {
+  const hasCurrentRepository =
+    currentRepositoryFullName &&
+    !repositories.some((repository) => repository.fullName === currentRepositoryFullName);
+
+  return (
+    <label>
+      <span>GitHub repository</span>
+      <select
+        disabled={disabled}
+        name="repositoryFullName"
+        defaultValue={currentRepositoryFullName ?? ""}
+      >
+        <option value="">No repository</option>
+        {hasCurrentRepository ? (
+          <option value={currentRepositoryFullName}>{currentRepositoryFullName} (currently attached)</option>
+        ) : null}
+        {repositories.map((repository) => (
+          <option key={repository.id} value={repository.fullName}>
+            {repository.fullName}
+            {repository.private ? " private" : ""}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -748,7 +824,17 @@ function ProjectDashboard({ project }: { project: ClientWorkflowProject }) {
   );
 }
 
-function ProjectCard({ backendUrl, project }: { backendUrl: string; project: ClientWorkflowProject }) {
+function ProjectCard({
+  backendUrl,
+  githubConnection,
+  githubRepositories,
+  project,
+}: {
+  backendUrl: string;
+  githubConnection: ClientGitHubAccountConnection | null;
+  githubRepositories: GitHubRepositorySummary[];
+  project: ClientWorkflowProject;
+}) {
   const [actionState, formAction] = useActionState(updateWorkflowProjectAction, initialActionState);
   const [title, setTitle] = useState(project.title);
   const [objective, setObjective] = useState(project.objective);
@@ -848,29 +934,13 @@ function ProjectCard({ backendUrl, project }: { backendUrl: string; project: Cli
 
         <fieldset className="rule-fieldset">
           <legend>GitHub repository</legend>
-          <div className="compact-grid">
-            <label>
-              <span>Owner</span>
-              <input defaultValue={project.repository?.owner ?? ""} name="repositoryOwner" />
-            </label>
-            <label>
-              <span>Repository</span>
-              <input defaultValue={project.repository?.name ?? ""} name="repositoryName" />
-            </label>
-            <label>
-              <span>Default branch</span>
-              <input defaultValue={project.repository?.defaultBranch ?? "main"} name="repositoryDefaultBranch" />
-            </label>
-            <label>
-              <span>GitHub token</span>
-              <input
-                autoComplete="off"
-                name="repositoryAccessToken"
-                placeholder={project.repository ? "Leave blank to keep existing token" : "GitHub token"}
-                type="password"
-              />
-            </label>
-          </div>
+          <RepositoryPicker
+            currentRepositoryFullName={
+              project.repository?.fullName ?? (project.repository ? repositoryLabel(project) : null)
+            }
+            disabled={!githubConnection || githubRepositories.length === 0}
+            repositories={githubRepositories}
+          />
         </fieldset>
 
         <fieldset className="rule-fieldset">
@@ -936,7 +1006,15 @@ function ProjectCard({ backendUrl, project }: { backendUrl: string; project: Cli
   );
 }
 
-export function SignedInHome({ backendUrl, projects, user }: SignedInHomeProps) {
+export function SignedInHome({
+  backendUrl,
+  githubConnection,
+  githubOAuthConfigured,
+  githubRepositories,
+  githubRepositoryError,
+  projects,
+  user,
+}: SignedInHomeProps) {
   const displayName = user.displayName?.trim() || user.email;
 
   return (
@@ -966,12 +1044,24 @@ export function SignedInHome({ backendUrl, projects, user }: SignedInHomeProps) 
         </p>
       </section>
 
+      <section className="workspace-band" aria-labelledby="github-title">
+        <div className="section-heading">
+          <p className="eyebrow">Repository access</p>
+          <h2 id="github-title">GitHub connection</h2>
+        </div>
+        <GitHubConnectionPanel
+          connection={githubConnection}
+          oauthConfigured={githubOAuthConfigured}
+          repositoryError={githubRepositoryError}
+        />
+      </section>
+
       <section className="workspace-band" aria-labelledby="new-project-title">
         <div className="section-heading">
           <p className="eyebrow">New project</p>
           <h2 id="new-project-title">Workflow configuration</h2>
         </div>
-        <ProjectForm />
+        <ProjectForm githubConnection={githubConnection} githubRepositories={githubRepositories} />
       </section>
 
       <section className="workspace-band" aria-labelledby="projects-title">
@@ -982,7 +1072,13 @@ export function SignedInHome({ backendUrl, projects, user }: SignedInHomeProps) 
         {projects.length > 0 ? (
           <div className="project-list">
             {projects.map((project) => (
-              <ProjectCard backendUrl={backendUrl} key={project.id} project={project} />
+              <ProjectCard
+                backendUrl={backendUrl}
+                githubConnection={githubConnection}
+                githubRepositories={githubRepositories}
+                key={project.id}
+                project={project}
+              />
             ))}
           </div>
         ) : (

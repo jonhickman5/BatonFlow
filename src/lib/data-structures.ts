@@ -132,14 +132,51 @@ export type WorkflowStageDefinition = {
 
 export type GitHubRepositoryConfig = {
   provider: "github";
+  githubRepositoryId?: number;
   owner: string;
   name: string;
+  fullName?: string;
   url: string;
   defaultBranch: string;
-  accessToken: string;
+  accessToken?: string;
   connectedAt: string;
   lastSyncedAt: string | null;
   syncError: string | null;
+};
+
+export type GitHubAccountConnection = {
+  userId: string;
+  githubUserId: number;
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  accessToken: string;
+  tokenType: string;
+  scope: string;
+  connectedAt: string;
+  lastUpdated: string;
+};
+
+export type ClientGitHubAccountConnection = Omit<GitHubAccountConnection, "accessToken"> & {
+  scopes: string[];
+};
+
+export type GitHubRepositorySummary = {
+  id: number;
+  owner: string;
+  name: string;
+  fullName: string;
+  url: string;
+  private: boolean;
+  defaultBranch: string;
+  updatedAt: string;
+  permissions: {
+    admin: boolean;
+    maintain: boolean;
+    push: boolean;
+    triage: boolean;
+    pull: boolean;
+  };
 };
 
 export type GitHubIssueSnapshot = {
@@ -753,8 +790,10 @@ export function sanitizeWorkflowProjectForClient(project: WorkflowProject): Clie
     repository: project.repository
       ? {
           provider: project.repository.provider,
+          githubRepositoryId: project.repository.githubRepositoryId,
           owner: project.repository.owner,
           name: project.repository.name,
+          fullName: project.repository.fullName,
           url: project.repository.url,
           defaultBranch: project.repository.defaultBranch,
           connectedAt: project.repository.connectedAt,
@@ -763,5 +802,26 @@ export function sanitizeWorkflowProjectForClient(project: WorkflowProject): Clie
           hasAccessToken: Boolean(project.repository.accessToken),
         }
       : null,
+  };
+}
+
+export function sanitizeGitHubConnectionForClient(
+  connection: GitHubAccountConnection | null,
+): ClientGitHubAccountConnection | null {
+  if (!connection) {
+    return null;
+  }
+
+  return {
+    userId: connection.userId,
+    githubUserId: connection.githubUserId,
+    login: connection.login,
+    name: connection.name,
+    avatarUrl: connection.avatarUrl,
+    tokenType: connection.tokenType,
+    scope: connection.scope,
+    scopes: connection.scope.split(/[,\s]+/).map((scope) => scope.trim()).filter(Boolean),
+    connectedAt: connection.connectedAt,
+    lastUpdated: connection.lastUpdated,
   };
 }

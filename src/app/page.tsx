@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { SignedInHome } from "@/app/home-ui";
-import { sanitizeWorkflowProjectForClient } from "@/lib/data-structures";
+import {
+  type GitHubRepositorySummary,
+  sanitizeGitHubConnectionForClient,
+  sanitizeWorkflowProjectForClient,
+} from "@/lib/data-structures";
+import { getAuthStore } from "@/lib/auth-store";
+import { fetchGitHubRepositories, getGitHubOAuthConfig } from "@/lib/github";
 import { getProjectStore } from "@/lib/project-store";
 import { getCurrentUser } from "@/lib/session";
 
@@ -55,10 +61,28 @@ export default async function Home() {
   const projectStore = getProjectStore();
   await projectStore.markStaleManagerCyclesForOwner(user.id);
   const projects = await projectStore.listProjects(user.id);
+  const githubConnection = await getAuthStore().getGitHubConnection(user.id);
+  let githubRepositories: GitHubRepositorySummary[] = [];
+  let githubRepositoryError: string | null = null;
+
+  if (githubConnection) {
+    try {
+      githubRepositories = await fetchGitHubRepositories(githubConnection.accessToken);
+    } catch (error) {
+      githubRepositoryError =
+        error instanceof Error ? error.message : "Could not load GitHub repositories.";
+    }
+  }
 
   return (
     <SignedInHome
       backendUrl={process.env.BATONFLOW_BACKEND_URL ?? "http://127.0.0.1:3000"}
+      githubConnection={sanitizeGitHubConnectionForClient(githubConnection)}
+      githubOAuthConfigured={Boolean(
+        getGitHubOAuthConfig(process.env.BATONFLOW_BACKEND_URL ?? "http://127.0.0.1:3000"),
+      )}
+      githubRepositories={githubRepositories}
+      githubRepositoryError={githubRepositoryError}
       projects={projects.map(sanitizeWorkflowProjectForClient)}
       user={{ displayName: user.displayName, email: user.email }}
     />

@@ -207,14 +207,51 @@ type WorkflowStageDefinition = {
 
 type GitHubRepositoryConfig = {
   provider: "github";
+  githubRepositoryId?: number;
   owner: string;
   name: string;
+  fullName?: string;
   url: string;
   defaultBranch: string;
-  accessToken: string;
+  accessToken?: string;      // legacy/server-only fallback; not sent to clients
   connectedAt: string;       // ISO datetime
   lastSyncedAt: string | null;
   syncError: string | null;
+};
+
+type GitHubAccountConnection = {
+  userId: string;
+  githubUserId: number;
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  accessToken: string;       // server-only OAuth token
+  tokenType: string;
+  scope: string;
+  connectedAt: string;       // ISO datetime
+  lastUpdated: string;       // ISO datetime
+};
+
+type ClientGitHubAccountConnection = Omit<GitHubAccountConnection, "accessToken"> & {
+  scopes: string[];
+};
+
+type GitHubRepositorySummary = {
+  id: number;
+  owner: string;
+  name: string;
+  fullName: string;
+  url: string;
+  private: boolean;
+  defaultBranch: string;
+  updatedAt: string;         // ISO datetime
+  permissions: {
+    admin: boolean;
+    maintain: boolean;
+    push: boolean;
+    triage: boolean;
+    pull: boolean;
+  };
 };
 
 type GitHubIssueSnapshot = {
@@ -360,17 +397,17 @@ Markdown instruction set, priority number, optional input rule, and required
 output rule.
 
 The local project file stores the manager agent bearer token so the copyable
-manager prompt can be reproduced after a reload. When a repository is connected,
-the same file also stores the project-scoped GitHub token used by the server to
-sync issues and pull requests. Treat `.data` as local credential material.
-Rotating the manager token from the project home invalidates older copied
-prompts.
+manager prompt can be reproduced after a reload. Repository attachment stores
+repository metadata on the project; the GitHub OAuth token lives on the signed-in
+user's account connection in the auth store. Treat `.data` as local credential
+material. Rotating the manager token from the project home invalidates older
+copied prompts.
 
 Repository association is one-to-one for now: one workflow project can reference
-one GitHub repository. The token is only used server-side. The copied manager
-prompt includes BatonFlow's manager bearer token but does not include GitHub
-credentials. Server-rendered pages pass `ClientWorkflowProject` to the browser so
-the UI can show repository status without serializing the GitHub access token.
+one GitHub repository. The OAuth token is only used server-side. Server-rendered
+pages pass `ClientGitHubAccountConnection` and `ClientWorkflowProject` to the
+browser so the UI can show connection and repository status without serializing
+the GitHub access token.
 
 Output rules drive stage WIP caps. For example, a planning stage can produce
 GitHub issues labeled `Pending Architecture`, prioritize when there are `0`, and
@@ -420,9 +457,10 @@ shape embeds `stages` because that is the domain shape the UI and prompt
 generator need after loading a project.
 
 Project-scoped relations should remain project-scoped in the database. For
-example, a stage can only reference a prompt in the same project, a next-stage
-edge can only connect stages in the same project, and a repository can only use
-an OAuth connection from the same project.
+example, a stage can only reference a prompt in the same project and a
+next-stage edge can only connect stages in the same project. GitHub account
+connections are user-scoped so a signed-in user can connect GitHub once and
+attach one accessible repository to each workflow project.
 
 User account uniqueness is enforced through `normalizedEmail`, which stores the
 trimmed lowercase email value. The display `email` can preserve user-facing

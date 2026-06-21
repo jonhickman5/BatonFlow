@@ -75,6 +75,67 @@ describe("JsonFileAuthStore", () => {
     await expect(store.findSessionByTokenHash("session-token-hash")).resolves.toBeNull();
   });
 
+  it("upserts, reads, and deletes a GitHub account connection", async () => {
+    const user = await store.createUser(userInput);
+
+    const connection = await store.upsertGitHubConnection({
+      userId: user.id,
+      githubUserId: 123,
+      login: "jonhickman5",
+      name: "Jon",
+      avatarUrl: "https://avatars.githubusercontent.com/u/123",
+      accessToken: "github-token",
+      tokenType: "bearer",
+      scope: "repo read:user user:email",
+    });
+
+    expect(connection).toMatchObject({
+      userId: user.id,
+      githubUserId: 123,
+      login: "jonhickman5",
+      accessToken: "github-token",
+    });
+    await expect(store.getGitHubConnection(user.id)).resolves.toMatchObject({
+      login: "jonhickman5",
+    });
+
+    const refreshedConnection = await store.upsertGitHubConnection({
+      userId: user.id,
+      githubUserId: 456,
+      login: "jon-renamed",
+      name: null,
+      avatarUrl: null,
+      accessToken: "new-token",
+      tokenType: "bearer",
+      scope: "repo",
+    });
+
+    expect(refreshedConnection.connectedAt).toBe(connection.connectedAt);
+    expect(refreshedConnection).toMatchObject({
+      githubUserId: 456,
+      login: "jon-renamed",
+      accessToken: "new-token",
+    });
+
+    await store.deleteGitHubConnection(user.id);
+    await expect(store.getGitHubConnection(user.id)).resolves.toBeNull();
+  });
+
+  it("reads legacy auth snapshots without GitHub connections", async () => {
+    await writeFile(
+      storePath,
+      JSON.stringify({
+        version: 1,
+        users: [],
+        sessions: [],
+        lastUpdated: "2026-06-21T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+
+    await expect(store.getGitHubConnection("missing")).resolves.toBeNull();
+  });
+
   it("rejects unsupported store shapes", async () => {
     await store.createUser(userInput);
     await rm(path.join(temporaryDirectory, "auth.json"));
