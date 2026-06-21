@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkflowProject } from "@/lib/data-structures";
 import { getProjectStore } from "@/lib/project-store";
+import type { ProjectStore } from "@/lib/project-store";
 import { POST } from "./route";
 
 vi.mock("@/lib/project-store", () => ({
@@ -13,6 +14,11 @@ const workflowProject: WorkflowProject = {
   title: "GameGlass",
   objective: "Keep the workflow moving.",
   globalInstructionsMarkdown: "# Global\n\nCheck leases.",
+  repository: null,
+  settings: {
+    maxTaskSteps: 20,
+    staleAgentMinutes: 90,
+  },
   managerAgent: {
     id: "manager-1",
     name: "Manager",
@@ -56,6 +62,26 @@ const workflowProject: WorkflowProject = {
       },
     },
   ],
+  githubIssueCache: {
+    syncedAt: "2026-06-21T00:00:00.000Z",
+    error: null,
+    issues: [
+      {
+        id: "issue-1",
+        number: 1,
+        title: "Architecture ready",
+        url: "https://github.com/jonhickman5/GameGlass/issues/1",
+        state: "open",
+        labels: ["Pending Architecture"],
+        assignees: [],
+        createdAt: "2026-06-21T00:00:00.000Z",
+        updatedAt: "2026-06-21T00:00:00.000Z",
+        eligibleStageIds: ["architecture"],
+      },
+    ],
+  },
+  managerCycles: [],
+  taskAudit: [],
   createdAt: "2026-06-21T00:00:00.000Z",
   lastUpdated: "2026-06-21T00:00:00.000Z",
 };
@@ -74,23 +100,31 @@ function context(projectId = "project-1") {
   };
 }
 
+function mockProjectStore(getProject = vi.fn().mockResolvedValue(workflowProject)) {
+  const store: ProjectStore = {
+    listProjects: vi.fn(),
+    getProject,
+    createProject: vi.fn(),
+    updateProject: vi.fn(),
+    rotateManagerAccessToken: vi.fn(),
+    recordGitHubIssueSync: vi.fn(),
+    startManagerCycle: vi.fn().mockResolvedValue(workflowProject),
+    recordManagerReport: vi.fn(),
+    markStaleManagerCyclesForProject: vi.fn().mockResolvedValue(workflowProject),
+    markStaleManagerCyclesForOwner: vi.fn(),
+  };
+
+  vi.mocked(getProjectStore).mockReturnValue(store);
+  return store;
+}
+
 describe("POST /api/projects/[projectId]/manager/next", () => {
   it("returns a next prompt using runtime resource counts", async () => {
-    vi.mocked(getProjectStore).mockReturnValue({
-      listProjects: vi.fn(),
-      getProject: vi.fn().mockResolvedValue(workflowProject),
-      createProject: vi.fn(),
-      updateProject: vi.fn(),
-      rotateManagerAccessToken: vi.fn(),
-    });
+    const store = mockProjectStore();
 
     const response = await POST(
       request({
         managerAgentId: "manager-1",
-        resourceCounts: {
-          "github_issue:open:pending architecture": 1,
-          "github_issue:open:pending implementation": 0,
-        },
       }),
       context(),
     );
@@ -98,37 +132,34 @@ describe("POST /api/projects/[projectId]/manager/next", () => {
 
     expect(response.status).toBe(200);
     expect(body.selectedStageName).toBe("Architecture");
+    expect(body.taskKey).toBe("github_issue:1");
     expect(body.prompt).toContain("# Architecture");
+    expect(store.startManagerCycle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cycleId: body.cycleId,
+        taskKey: "github_issue:1",
+      }),
+    );
   });
 
   it("rejects missing projects, wrong manager ids, missing counts, and invalid JSON", async () => {
     const getProject = vi.fn().mockResolvedValue(null);
 
-    vi.mocked(getProjectStore).mockReturnValue({
-      listProjects: vi.fn(),
-      getProject,
-      createProject: vi.fn(),
-      updateProject: vi.fn(),
-      rotateManagerAccessToken: vi.fn(),
-    });
+    mockProjectStore(getProject);
 
-    await expect(POST(request({ managerAgentId: "manager-1", resourceCounts: {} }), context())).resolves
+    await expect(POST(request({ managerAgentId: "manager-1" }), context())).resolves
       .toHaveProperty("status", 404);
 
     getProject.mockResolvedValue(workflowProject);
 
-    await expect(POST(request({ managerAgentId: "wrong", resourceCounts: {} }), context())).resolves
+    await expect(POST(request({ managerAgentId: "wrong" }), context())).resolves
       .toHaveProperty("status", 403);
     await expect(
-      POST(request({ managerAgentId: "manager-1", resourceCounts: {} }, "wrong-token"), context()),
+      POST(request({ managerAgentId: "manager-1" }, "wrong-token"), context()),
     ).resolves.toHaveProperty("status", 401);
     await expect(
-      POST(request({ managerAgentId: "manager-1", resourceCounts: {} }, ""), context()),
+      POST(request({ managerAgentId: "manager-1" }, ""), context()),
     ).resolves.toHaveProperty("status", 401);
-    await expect(POST(request({ managerAgentId: "manager-1" }), context())).resolves.toHaveProperty(
-      "status",
-      400,
-    );
     await expect(
       POST(
         new Request("http://localhost/api/projects/project-1/manager/next", {
@@ -142,13 +173,7 @@ describe("POST /api/projects/[projectId]/manager/next", () => {
   });
 
   it("requires bearer auth before parsing the request body", async () => {
-    vi.mocked(getProjectStore).mockReturnValue({
-      listProjects: vi.fn(),
-      getProject: vi.fn().mockResolvedValue(workflowProject),
-      createProject: vi.fn(),
-      updateProject: vi.fn(),
-      rotateManagerAccessToken: vi.fn(),
-    });
+    mockProjectStore();
 
     const response = await POST(
       new Request("http://localhost/api/projects/project-1/manager/next", {
@@ -162,22 +187,98 @@ describe("POST /api/projects/[projectId]/manager/next", () => {
   });
 
   it("fails clearly when a legacy project has no durable manager token", async () => {
-    vi.mocked(getProjectStore).mockReturnValue({
-      listProjects: vi.fn(),
-      getProject: vi.fn().mockResolvedValue({
+    mockProjectStore(
+      vi.fn().mockResolvedValue({
         ...workflowProject,
         managerAgent: {
           ...workflowProject.managerAgent,
           accessToken: "",
         },
       }),
-      createProject: vi.fn(),
-      updateProject: vi.fn(),
-      rotateManagerAccessToken: vi.fn(),
-    });
+    );
 
-    const response = await POST(request({ managerAgentId: "manager-1", resourceCounts: {} }), context());
+    const response = await POST(request({ managerAgentId: "manager-1" }), context());
 
     expect(response.status).toBe(409);
+  });
+
+  it("waits instead of dispatching when a manager cycle is already active", async () => {
+    const activeProject = {
+      ...workflowProject,
+      managerCycles: [
+        {
+          id: "cycle-active",
+          managerAgentId: "manager-1",
+          stageId: "architecture",
+          stageName: "Architecture",
+          taskKey: "github_issue:1",
+          taskTitle: "Architecture ready",
+          taskUrl: "https://github.com/jonhickman5/GameGlass/issues/1",
+          status: "running" as const,
+          prompt: "Do architecture.",
+          createdAt: "2026-06-21T00:00:00.000Z",
+          updatedAt: "2026-06-21T00:00:00.000Z",
+          completedAt: null,
+          lastHeartbeatAt: "2026-06-21T00:00:00.000Z",
+          maxSteps: 20,
+          stepCount: 0,
+          agents: [],
+          failureReason: null,
+          terminalSummary: null,
+        },
+      ],
+    };
+    const store = mockProjectStore(vi.fn().mockResolvedValue(activeProject));
+
+    vi.mocked(store.markStaleManagerCyclesForProject).mockResolvedValue(activeProject);
+
+    const response = await POST(request({ managerAgentId: "manager-1" }), context());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.decision).toBe("wait");
+    expect(body.reason).toBe("active_cycle_exists");
+    expect(store.startManagerCycle).not.toHaveBeenCalled();
+  });
+
+  it("returns wait when a concurrent request starts a cycle first", async () => {
+    const activeProject = {
+      ...workflowProject,
+      managerCycles: [
+        {
+          id: "cycle-race",
+          managerAgentId: "manager-1",
+          stageId: "architecture",
+          stageName: "Architecture",
+          taskKey: "github_issue:1",
+          taskTitle: "Architecture ready",
+          taskUrl: "https://github.com/jonhickman5/GameGlass/issues/1",
+          status: "running" as const,
+          prompt: "Do architecture.",
+          createdAt: "2026-06-21T00:00:00.000Z",
+          updatedAt: "2026-06-21T00:00:00.000Z",
+          completedAt: null,
+          lastHeartbeatAt: "2026-06-21T00:00:00.000Z",
+          maxSteps: 20,
+          stepCount: 0,
+          agents: [],
+          failureReason: null,
+          terminalSummary: null,
+        },
+      ],
+    };
+    const store = mockProjectStore(vi.fn().mockResolvedValueOnce(workflowProject).mockResolvedValue(activeProject));
+
+    vi.mocked(store.startManagerCycle).mockRejectedValue(
+      new Error("Project already has an active manager cycle."),
+    );
+
+    const response = await POST(request({ managerAgentId: "manager-1" }), context());
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.decision).toBe("wait");
+    expect(body.reason).toBe("active_cycle_exists");
+    expect(body.cycleId).toBe("cycle-race");
   });
 });

@@ -1,7 +1,11 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { buildManagerNextPrompt } from "@/lib/data-structures";
-import type { WorkflowResourceCounts } from "@/lib/data-structures";
+import {
+  buildManagerNextPrompt,
+  getActiveManagerCycles,
+  workflowResourceCountsFromIssues,
+} from "@/lib/data-structures";
+import { fetchGitHubIssues } from "@/lib/github";
 import { getProjectStore } from "@/lib/project-store";
 
 export const dynamic = "force-dynamic";
@@ -9,22 +13,7 @@ export const runtime = "nodejs";
 
 type ManagerNextBody = {
   managerAgentId?: string;
-  resourceCounts?: Record<string, unknown>;
 };
-
-function normalizeResourceCounts(rawCounts: Record<string, unknown> | undefined): WorkflowResourceCounts | null {
-  if (!rawCounts || Array.isArray(rawCounts)) {
-    return null;
-  }
-
-  return Object.fromEntries(
-    Object.entries(rawCounts).map(([key, value]) => {
-      const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
-
-      return [key, Math.max(0, Math.floor(numericValue))];
-    }),
-  );
-}
 
 function bearerTokenFrom(request: Request): string {
   const authorization = request.headers.get("authorization") ?? "";
@@ -68,11 +57,86 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     return NextResponse.json({ error: "Manager agent id does not match this project." }, { status: 403 });
   }
 
-  const resourceCounts = normalizeResourceCounts(body.resourceCounts);
+  const store = getProjectStore();
+  let nextProject = await store.markStaleManagerCyclesForProject(project.id);
+  const activeCycles = getActiveManagerCycles(nextProject);
 
-  if (!resourceCounts) {
-    return NextResponse.json({ error: "resourceCounts are required." }, { status: 400 });
+  if (activeCycles.length > 0) {
+    const activeCycle = activeCycles[0];
+
+    return NextResponse.json({
+      projectId: nextProject.id,
+      decision: "wait",
+      reason: "active_cycle_exists",
+      selectedStageId: null,
+      selectedStageName: null,
+      cycleId: activeCycle.id,
+      taskKey: activeCycle.taskKey,
+      taskTitle: activeCycle.taskTitle,
+      taskUrl: activeCycle.taskUrl,
+      generatedAt: new Date().toISOString(),
+      prompt: [
+        `Project "${nextProject.title}" already has an active manager cycle (${activeCycle.id}).`,
+        "Do not dispatch another worker. Observe the active cycle or wait for it to report back.",
+      ].join("\n"),
+    });
   }
 
-  return NextResponse.json(buildManagerNextPrompt(project, resourceCounts));
+  if (nextProject.repository) {
+    try {
+      const issues = await fetchGitHubIssues(nextProject.repository);
+
+      nextProject = await store.recordGitHubIssueSync(nextProject.id, issues);
+    } catch (error) {
+      nextProject = await store.recordGitHubIssueSync(
+        nextProject.id,
+        nextProject.githubIssueCache.issues,
+        error instanceof Error ? error.message : "GitHub issue sync failed.",
+      );
+    }
+  }
+
+  const cycleId = randomUUID();
+  const resourceCounts = workflowResourceCountsFromIssues(nextProject);
+  const nextPrompt = buildManagerNextPrompt(nextProject, resourceCounts, cycleId);
+
+  try {
+    await store.startManagerCycle({
+      cycleId,
+      managerAgentId: nextProject.managerAgent.id,
+      projectId: nextProject.id,
+      stageId: nextPrompt.selectedStageId,
+      stageName: nextPrompt.selectedStageName,
+      taskKey: nextPrompt.taskKey,
+      taskTitle: nextPrompt.taskTitle,
+      taskUrl: nextPrompt.taskUrl,
+      prompt: nextPrompt.prompt,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "Project already has an active manager cycle.") {
+      const currentProject = await store.getProject(nextProject.id);
+      const activeCycle = currentProject ? getActiveManagerCycles(currentProject)[0] : null;
+
+      return NextResponse.json(
+        {
+          projectId: nextProject.id,
+          decision: "wait",
+          reason: "active_cycle_exists",
+          selectedStageId: null,
+          selectedStageName: null,
+          cycleId: activeCycle?.id ?? null,
+          taskKey: activeCycle?.taskKey ?? null,
+          taskTitle: activeCycle?.taskTitle ?? null,
+          taskUrl: activeCycle?.taskUrl ?? null,
+          generatedAt: new Date().toISOString(),
+          prompt: "Another manager cycle started first. Do not dispatch another worker.",
+        },
+        { status: 409 },
+      );
+    }
+
+    throw error;
+  }
+
+  return NextResponse.json(nextPrompt);
 }

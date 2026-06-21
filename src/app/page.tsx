@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SignedInHome } from "@/app/home-ui";
+import { sanitizeWorkflowProjectForClient } from "@/lib/data-structures";
 import { getProjectStore } from "@/lib/project-store";
 import { getCurrentUser } from "@/lib/session";
 
@@ -51,12 +52,14 @@ export default async function Home() {
     return <PublicLanding />;
   }
 
-  const projects = await getProjectStore().listProjects(user.id);
+  const projectStore = getProjectStore();
+  await projectStore.markStaleManagerCyclesForOwner(user.id);
+  const projects = await projectStore.listProjects(user.id);
 
   return (
     <SignedInHome
       backendUrl={process.env.BATONFLOW_BACKEND_URL ?? "http://127.0.0.1:3000"}
-      projects={projects}
+      projects={projects.map(sanitizeWorkflowProjectForClient)}
       user={{ displayName: user.displayName, email: user.email }}
     />
   );

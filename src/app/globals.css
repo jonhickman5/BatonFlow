@@ -718,6 +718,150 @@ h1 {
   text-transform: uppercase;
 }
 
+.project-dashboard {
+  display: grid;
+  gap: 16px;
+  margin-top: 22px;
+}
+
+.dashboard-panel {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.attention-panel {
+  border-color: rgba(163, 31, 31, 0.45);
+}
+
+.dashboard-panel-heading h4 {
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.dashboard-summary,
+.repo-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-metric {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+  min-height: 70px;
+  padding: 12px;
+}
+
+.dashboard-metric span,
+.muted-copy,
+.issue-list span,
+.work-list span,
+.table-row span {
+  color: var(--muted);
+}
+
+.dashboard-metric span,
+.issue-list span,
+.work-list span,
+.table-row span {
+  font-size: 12px;
+}
+
+.dashboard-metric strong {
+  overflow-wrap: anywhere;
+  font-size: 18px;
+}
+
+.repo-link {
+  border: 1px solid var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 70px;
+  padding: 12px;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stage-eligibility-grid,
+.work-list,
+.issue-list,
+.table-list {
+  display: grid;
+  gap: 8px;
+}
+
+.stage-eligibility-row {
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: minmax(180px, 0.75fr) 110px minmax(0, 1.25fr);
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.stage-eligibility-row p,
+.muted-copy {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.issue-list,
+.work-list {
+  list-style: none;
+}
+
+.issue-list li,
+.work-list li,
+.table-row {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+
+.issue-list li {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.work-list li {
+  grid-template-columns: minmax(0, 1fr) max-content;
+}
+
+.agent-run-list {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  list-style: none;
+}
+
+.agent-run-list li {
+  background: #f8f7f2;
+  border: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 8px;
+}
+
+.work-list p {
+  grid-column: 1 / -1;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.table-row {
+  grid-template-columns: 1fr 0.7fr 0.7fr 1fr 1.4fr;
+  align-items: start;
+}
+
+.table-row span {
+  overflow-wrap: anywhere;
+}
+
 .manager-prompt-preview {
   border-top: 1px solid var(--line);
   margin-top: 22px;
@@ -756,6 +900,10 @@ h1 {
   .auth-layout,
   .workspace-band,
   .form-grid,
+  .dashboard-summary,
+  .repo-status-grid,
+  .stage-eligibility-row,
+  .table-row,
   .rule-grid,
   .compact-grid {
     grid-template-columns: 1fr;

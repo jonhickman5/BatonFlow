@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SignedInHome } from "./home-ui";
-import type { WorkflowProject } from "@/lib/data-structures";
+import { sanitizeWorkflowProjectForClient, type WorkflowProject } from "@/lib/data-structures";
 
 vi.mock("@/app/actions", () => ({
   signOutAction: vi.fn(),
@@ -19,6 +19,21 @@ const workflowProject: WorkflowProject = {
   title: "GameGlass",
   objective: "Keep GameGlass workflow items moving.",
   globalInstructionsMarkdown: "# Global\n\nCheck leases first.",
+  repository: {
+    provider: "github",
+    owner: "jonhickman5",
+    name: "GameGlass",
+    url: "https://github.com/jonhickman5/GameGlass",
+    defaultBranch: "main",
+    accessToken: "github-secret-token",
+    connectedAt: "2026-06-21T00:00:00.000Z",
+    lastSyncedAt: "2026-06-21T00:10:00.000Z",
+    syncError: null,
+  },
+  settings: {
+    maxTaskSteps: 20,
+    staleAgentMinutes: 90,
+  },
   managerAgent: {
     id: "manager-1",
     name: "Manager",
@@ -48,9 +63,85 @@ const workflowProject: WorkflowProject = {
       },
     },
   ],
+  githubIssueCache: {
+    syncedAt: "2026-06-21T00:10:00.000Z",
+    error: null,
+    issues: [
+      {
+        id: "issue-1",
+        number: 42,
+        title: "Implement repository dashboard",
+        url: "https://github.com/jonhickman5/GameGlass/issues/42",
+        state: "open",
+        labels: ["Pending Implementation"],
+        assignees: ["jon"],
+        createdAt: "2026-06-21T00:00:00.000Z",
+        updatedAt: "2026-06-21T00:10:00.000Z",
+        eligibleStageIds: ["implementation"],
+      },
+    ],
+  },
+  managerCycles: [
+    {
+      id: "cycle-1",
+      managerAgentId: "manager-1",
+      stageId: "implementation",
+      stageName: "Implementation",
+      taskKey: "github_issue:42",
+      taskTitle: "Implement repository dashboard",
+      taskUrl: "https://github.com/jonhickman5/GameGlass/issues/42",
+      status: "failed",
+      prompt: "Do implementation.",
+      createdAt: "2026-06-21T00:00:00.000Z",
+      updatedAt: "2026-06-21T00:15:00.000Z",
+      completedAt: "2026-06-21T00:15:00.000Z",
+      lastHeartbeatAt: "2026-06-21T00:15:00.000Z",
+      maxSteps: 20,
+      stepCount: 8,
+      agents: [
+        {
+          id: "agent-1",
+          name: "Implementation subagent",
+          stageId: "implementation",
+          stageName: "Implementation",
+          taskKey: "github_issue:42",
+          taskTitle: "Implement repository dashboard",
+          taskUrl: "https://github.com/jonhickman5/GameGlass/issues/42",
+          status: "crashed",
+          terminalState: "Process exited unexpectedly.",
+          startedAt: "2026-06-21T00:00:00.000Z",
+          completedAt: "2026-06-21T00:15:00.000Z",
+          durationMs: 900000,
+          stepCount: 8,
+          failureReason: "Agent crashed.",
+        },
+      ],
+      failureReason: "Subagent crashed.",
+      terminalSummary: "Crash observed.",
+    },
+  ],
+  taskAudit: [
+    {
+      id: "audit-1",
+      cycleId: "cycle-1",
+      agentId: "agent-1",
+      taskKey: "github_issue:42",
+      taskTitle: "Implement repository dashboard",
+      taskUrl: "https://github.com/jonhickman5/GameGlass/issues/42",
+      stageId: "implementation",
+      stageName: "Implementation",
+      type: "agent_reported",
+      summary: "Subagent crashed.",
+      createdAt: "2026-06-21T00:15:00.000Z",
+      durationMs: 900000,
+      stepCount: 8,
+      status: "crashed",
+    },
+  ],
   createdAt: "2026-06-21T00:00:00.000Z",
   lastUpdated: "2026-06-21T00:00:00.000Z",
 };
+const sanitizedWorkflowProject = sanitizeWorkflowProjectForClient(workflowProject);
 
 beforeEach(() => {
   Object.defineProperty(navigator, "clipboard", {
@@ -86,18 +177,30 @@ describe("SignedInHome", () => {
     render(
       <SignedInHome
         backendUrl="http://localhost:3000"
-        projects={[workflowProject]}
+        projects={[sanitizedWorkflowProject]}
         user={{ displayName: null, email: "jon@example.com" }}
       />,
     );
 
-    const projectCard = screen.getByRole("article");
+    const projectCard = screen.getByRole("heading", { name: "GameGlass" }).closest(".project-card");
 
-    expect(within(projectCard).getByRole("heading", { name: "GameGlass" })).toBeInTheDocument();
-    expect(within(projectCard).getByText("1. Implementation")).toBeInTheDocument();
-    expect(within(projectCard).getByRole("button", { name: "Rotate token" })).toBeInTheDocument();
+    expect(projectCard).not.toBeNull();
 
-    fireEvent.click(within(projectCard).getByRole("button", { name: "Copy manager prompt" }));
+    const card = within(projectCard as HTMLElement);
+
+    expect(card.getByRole("heading", { name: "GameGlass" })).toBeInTheDocument();
+    expect(card.getAllByText("1. Implementation").length).toBeGreaterThan(0);
+    expect(card.getByText("jonhickman5/GameGlass")).toBeInTheDocument();
+    expect(card.getAllByText(/Implement repository dashboard/).length).toBeGreaterThan(0);
+    expect(card.getAllByText("Subagent crashed.").length).toBeGreaterThan(0);
+    expect(card.getByText("Implementation subagent")).toBeInTheDocument();
+    expect(card.getByText("Process exited unexpectedly.")).toBeInTheDocument();
+    expect(card.getByText(/crashed · 8 steps · 15m 0s/)).toBeInTheDocument();
+    expect(card.getByRole("button", { name: "Rotate token" })).toBeInTheDocument();
+    expect(card.queryByText("github-secret-token")).not.toBeInTheDocument();
+    expect(JSON.stringify(sanitizedWorkflowProject)).not.toContain("github-secret-token");
+
+    fireEvent.click(card.getByRole("button", { name: "Copy manager prompt" }));
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       expect.stringContaining("/api/projects/project-1/manager/next"),

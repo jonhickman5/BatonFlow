@@ -3,12 +3,20 @@ import {
   assertProjectHasValidStartStage,
   buildManagerAgentPrompt,
   buildManagerNextPrompt,
+  getActiveManagerCycles,
+  getEligibleGitHubIssuesByStage,
+  getFailedManagerCycles,
+  getTaskStepCount,
   getWorkflowResourceSelectors,
   getStartStage,
   getUserAccountLabel,
   getValidNextStages,
+  issueMatchesWorkflowSelector,
+  markStaleManagerCycles,
   normalizeEmail,
+  sanitizeWorkflowProjectForClient,
   selectNextWorkflowStage,
+  workflowResourceCountsFromIssues,
   summarizeProjectUpdate,
   type Project,
   type Stage,
@@ -70,6 +78,21 @@ const workflowProject: WorkflowProject = {
   title: "BatonFlow",
   objective: "Create a reliable manager-led workflow.",
   globalInstructionsMarkdown: "# Global\n\nVerify every handoff.",
+  repository: {
+    provider: "github",
+    owner: "jonhickman5",
+    name: "BatonFlow",
+    url: "https://github.com/jonhickman5/BatonFlow",
+    defaultBranch: "main",
+    accessToken: "github-token",
+    connectedAt: "2026-06-07T00:00:00.000Z",
+    lastSyncedAt: "2026-06-07T00:00:00.000Z",
+    syncError: null,
+  },
+  settings: {
+    maxTaskSteps: 20,
+    staleAgentMinutes: 90,
+  },
   managerAgent: {
     id: "manager-1",
     name: "Manager",
@@ -130,6 +153,96 @@ const workflowProject: WorkflowProject = {
         refillWhenAtOrBelow: 0,
         holdWhenAtOrAbove: 1,
       },
+    },
+  ],
+  githubIssueCache: {
+    syncedAt: "2026-06-07T00:00:00.000Z",
+    error: null,
+    issues: [
+      {
+        id: "issue-1",
+        number: 1,
+        title: "Needs architecture",
+        url: "https://github.com/jonhickman5/BatonFlow/issues/1",
+        state: "open",
+        labels: ["Pending Architecture"],
+        assignees: ["jon"],
+        createdAt: "2026-06-07T00:00:00.000Z",
+        updatedAt: "2026-06-07T01:00:00.000Z",
+        eligibleStageIds: ["architecture"],
+      },
+      {
+        id: "issue-2",
+        number: 2,
+        title: "Needs implementation",
+        url: "https://github.com/jonhickman5/BatonFlow/issues/2",
+        state: "open",
+        labels: ["Pending Implementation"],
+        assignees: [],
+        createdAt: "2026-06-07T00:00:00.000Z",
+        updatedAt: "2026-06-07T01:00:00.000Z",
+        eligibleStageIds: ["implementation"],
+      },
+    ],
+  },
+  managerCycles: [
+    {
+      id: "cycle-running",
+      managerAgentId: "manager-1",
+      stageId: "implementation",
+      stageName: "Implementation",
+      taskKey: "github_issue:2",
+      taskTitle: "Needs implementation",
+      taskUrl: "https://github.com/jonhickman5/BatonFlow/issues/2",
+      status: "running",
+      prompt: "Do implementation.",
+      createdAt: "2026-06-07T00:00:00.000Z",
+      updatedAt: "2026-06-07T00:00:00.000Z",
+      completedAt: null,
+      lastHeartbeatAt: "2026-06-07T00:00:00.000Z",
+      maxSteps: 20,
+      stepCount: 3,
+      agents: [],
+      failureReason: null,
+      terminalSummary: null,
+    },
+    {
+      id: "cycle-failed",
+      managerAgentId: "manager-1",
+      stageId: "architecture",
+      stageName: "Architecture",
+      taskKey: "github_issue:1",
+      taskTitle: "Needs architecture",
+      taskUrl: "https://github.com/jonhickman5/BatonFlow/issues/1",
+      status: "failed",
+      prompt: "Do architecture.",
+      createdAt: "2026-06-07T00:00:00.000Z",
+      updatedAt: "2026-06-07T00:10:00.000Z",
+      completedAt: "2026-06-07T00:10:00.000Z",
+      lastHeartbeatAt: "2026-06-07T00:10:00.000Z",
+      maxSteps: 20,
+      stepCount: 4,
+      agents: [],
+      failureReason: "Worker failed.",
+      terminalSummary: "Failed.",
+    },
+  ],
+  taskAudit: [
+    {
+      id: "audit-1",
+      cycleId: "cycle-failed",
+      agentId: "agent-1",
+      taskKey: "github_issue:1",
+      taskTitle: "Needs architecture",
+      taskUrl: "https://github.com/jonhickman5/BatonFlow/issues/1",
+      stageId: "architecture",
+      stageName: "Architecture",
+      type: "agent_reported",
+      summary: "Architecture failed.",
+      createdAt: "2026-06-07T00:10:00.000Z",
+      durationMs: 600000,
+      stepCount: 4,
+      status: "failed",
     },
   ],
   createdAt: "2026-06-07T00:00:00.000Z",
@@ -252,12 +365,171 @@ describe("data structures helpers", () => {
     ]);
   });
 
+  it("derives GitHub issue eligibility and resource counts from cached issues", () => {
+    const eligibility = getEligibleGitHubIssuesByStage(workflowProject);
+
+    expect(eligibility.find((entry) => entry.stage.name === "Architecture")?.issues[0].number).toBe(1);
+    expect(eligibility.find((entry) => entry.stage.name === "Implementation")?.issues[0].number).toBe(2);
+    expect(workflowResourceCountsFromIssues(workflowProject)).toMatchObject({
+      "github_issue:open:pending architecture": 1,
+      "github_issue:open:pending implementation": 1,
+    });
+  });
+
+  it("derives GitHub pull request eligibility and resource counts from cached items", () => {
+    const pullRequestProject: WorkflowProject = {
+      ...workflowProject,
+      stages: [
+        {
+          id: "review",
+          name: "Review",
+          priority: 0,
+          instructionsMarkdown: "# Review\n\nVerify the PR.",
+          input: {
+            kind: "github_pull_request",
+            status: "Open",
+            label: "Review",
+            minimumReady: 1,
+          },
+          output: {
+            kind: "manual_task",
+            status: "Done",
+            label: "Merged",
+            refillWhenAtOrBelow: 0,
+            holdWhenAtOrAbove: 1,
+          },
+        },
+        ...workflowProject.stages,
+      ],
+      githubIssueCache: {
+        ...workflowProject.githubIssueCache,
+        issues: [
+          ...workflowProject.githubIssueCache.issues,
+          {
+            id: "pull-7",
+            kind: "github_pull_request",
+            number: 7,
+            title: "Ready for review",
+            url: "https://github.com/jonhickman5/BatonFlow/pull/7",
+            state: "open",
+            labels: ["Review"],
+            assignees: [],
+            createdAt: "2026-06-07T00:00:00.000Z",
+            updatedAt: "2026-06-07T01:00:00.000Z",
+            eligibleStageIds: [],
+          },
+        ],
+      },
+    };
+
+    expect(workflowResourceCountsFromIssues(pullRequestProject)).toMatchObject({
+      "github_pull_request:open:review": 1,
+    });
+    expect(
+      issueMatchesWorkflowSelector(pullRequestProject.githubIssueCache.issues[2], {
+        kind: "github_pull_request",
+        status: "Open",
+        label: "Review",
+      }),
+    ).toBe(true);
+    expect(
+      buildManagerNextPrompt(
+        pullRequestProject,
+        {
+          "github_pull_request:open:review": 1,
+          "github_issue:open:pending architecture": 1,
+        },
+        "cycle-review",
+      ).prompt,
+    ).toContain("Selected GitHub pull request: #7");
+  });
+
+  it("counts unsupported cached resource selectors as zero", () => {
+    const counts = workflowResourceCountsFromIssues({
+      ...workflowProject,
+      stages: [
+        {
+          ...workflowProject.stages[0],
+          output: {
+            kind: "manual_task",
+            status: "Ready",
+            label: "Human Review",
+            refillWhenAtOrBelow: 0,
+            holdWhenAtOrAbove: 1,
+          },
+        },
+      ],
+    });
+
+    expect(counts["manual_task:ready:human review"]).toBe(0);
+  });
+
+  it("sanitizes repository credentials before projects are passed to the client", () => {
+    const sanitizedProject = sanitizeWorkflowProjectForClient(workflowProject);
+
+    expect(sanitizedProject.repository).toMatchObject({
+      owner: "jonhickman5",
+      name: "BatonFlow",
+      hasAccessToken: true,
+    });
+    expect(JSON.stringify(sanitizedProject)).not.toContain("github-token");
+  });
+
+  it("matches GitHub issue selectors case-insensitively and rejects unsupported resources", () => {
+    const issue = workflowProject.githubIssueCache.issues[0];
+
+    expect(
+      issueMatchesWorkflowSelector(issue, {
+        kind: "github_issue",
+        status: "Opened",
+        label: "pending architecture",
+      }),
+    ).toBe(true);
+    expect(
+      issueMatchesWorkflowSelector(issue, {
+        kind: "github_issue",
+        status: "Open",
+        label: "",
+      }),
+    ).toBe(true);
+    expect(
+      issueMatchesWorkflowSelector(issue, {
+        kind: "manual_task",
+        status: "Open",
+        label: "Pending Architecture",
+      }),
+    ).toBe(false);
+  });
+
+  it("tracks active and failed manager cycles plus task steps", () => {
+    expect(getActiveManagerCycles(workflowProject)).toHaveLength(1);
+    expect(getFailedManagerCycles(workflowProject)).toHaveLength(1);
+    expect(getTaskStepCount(workflowProject, "github_issue:1")).toBe(4);
+  });
+
+  it("marks stale running cycles as failures", () => {
+    const updatedProject = markStaleManagerCycles(
+      workflowProject,
+      new Date("2026-06-07T03:00:00.000Z"),
+    );
+
+    expect(updatedProject.managerCycles.find((cycle) => cycle.id === "cycle-running")?.status).toBe("stale");
+    expect(updatedProject.taskAudit[updatedProject.taskAudit.length - 1].type).toBe("stale_failure");
+  });
+
+  it("leaves fresh cycles unchanged during stale checks", () => {
+    expect(markStaleManagerCycles(workflowProject, new Date("2026-06-07T00:05:00.000Z"))).toBe(
+      workflowProject,
+    );
+  });
+
   it("builds a manager bootstrap prompt for the backend next endpoint", () => {
     expect(buildManagerAgentPrompt(workflowProject, "http://localhost:3000/")).toContain(
       "POST request to http://localhost:3000/api/projects/workflow-1/manager/next",
     );
     expect(buildManagerAgentPrompt(workflowProject)).toContain('"managerAgentId":"manager-1"');
-    expect(buildManagerAgentPrompt(workflowProject)).toContain('"resourceCounts"');
+    expect(buildManagerAgentPrompt(workflowProject)).toContain("/manager/report");
+    expect(buildManagerAgentPrompt(workflowProject)).not.toContain("github-token");
   });
 
   it("refuses to build a manager prompt without a durable access token", () => {
@@ -276,10 +548,54 @@ describe("data structures helpers", () => {
     });
 
     expect(nextPrompt.selectedStageName).toBe("Architecture");
+    expect(nextPrompt.cycleId).toBeNull();
+    expect(nextPrompt.taskKey).toBe("github_issue:1");
     expect(nextPrompt.prompt).toContain("Objective: Create a reliable manager-led workflow.");
     expect(nextPrompt.prompt).toContain("# Global");
     expect(nextPrompt.prompt).toContain("# Architecture");
     expect(nextPrompt.prompt).toContain("do not run at or above 1");
+  });
+
+  it("builds a dispatch prompt for refill stages without an existing GitHub issue", () => {
+    const nextPrompt = buildManagerNextPrompt(
+      workflowProject,
+      {
+        "github_pull_request:open:review": 1,
+        "github_issue:open:pending architecture": 0,
+        "github_issue:open:pending implementation": 0,
+      },
+      "cycle-planning",
+    );
+
+    expect(nextPrompt.decision).toBe("dispatch");
+    expect(nextPrompt.selectedStageName).toBe("Planning");
+    expect(nextPrompt.cycleId).toBe("cycle-planning");
+    expect(nextPrompt.taskKey).toBeNull();
+    expect(nextPrompt.prompt).toContain("Input: no upstream input is required for this stage.");
+    expect(nextPrompt.prompt).toContain(
+      "Selected task: queue/refill cycle; no existing GitHub work item is assigned.",
+    );
+  });
+
+  it("builds a safety stop prompt when every matching issue reached the step limit", () => {
+    const nextPrompt = buildManagerNextPrompt(
+      {
+        ...workflowProject,
+        settings: {
+          ...workflowProject.settings,
+          maxTaskSteps: 4,
+        },
+      },
+      {
+        "github_pull_request:open:review": 1,
+        "github_issue:open:pending architecture": 1,
+      },
+      "cycle-steps",
+    );
+
+    expect(nextPrompt.decision).toBe("stop");
+    expect(nextPrompt.reason).toBe("no_eligible_issue_or_step_limit");
+    expect(nextPrompt.prompt).toContain("max step limit");
   });
 
   it("builds a stop prompt when a project has no eligible stages", () => {

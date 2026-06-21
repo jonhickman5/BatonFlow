@@ -13,8 +13,11 @@ vi.mock("@/lib/project-store", () => ({
 }));
 
 vi.mock("@/app/home-ui", () => ({
-  SignedInHome: ({ user }: { user: { email: string } }) => (
-    <main>Signed-in workflow home for {user.email}</main>
+  SignedInHome: ({ projects, user }: { projects: unknown[]; user: { email: string } }) => (
+    <main>
+      Signed-in workflow home for {user.email}
+      <pre data-testid="signed-in-projects">{JSON.stringify(projects)}</pre>
+    </main>
   ),
 }));
 
@@ -26,6 +29,11 @@ beforeEach(() => {
     createProject: vi.fn(),
     updateProject: vi.fn(),
     rotateManagerAccessToken: vi.fn(),
+    recordGitHubIssueSync: vi.fn(),
+    startManagerCycle: vi.fn(),
+    recordManagerReport: vi.fn(),
+    markStaleManagerCyclesForProject: vi.fn(),
+    markStaleManagerCyclesForOwner: vi.fn(),
   });
 });
 
@@ -56,10 +64,56 @@ describe("Home", () => {
       lastUpdated: "2026-06-21T00:00:00.000Z",
     });
 
+    vi.mocked(getProjectStore().listProjects).mockResolvedValue([
+      {
+        id: "project-1",
+        ownerUserId: "user-1",
+        title: "BatonFlow",
+        objective: "Coordinate project work.",
+        globalInstructionsMarkdown: "# Global",
+        repository: {
+          provider: "github",
+          owner: "jonhickman5",
+          name: "BatonFlow",
+          url: "https://github.com/jonhickman5/BatonFlow",
+          defaultBranch: "main",
+          accessToken: "github-secret-token",
+          connectedAt: "2026-06-21T00:00:00.000Z",
+          lastSyncedAt: null,
+          syncError: null,
+        },
+        settings: {
+          maxTaskSteps: 20,
+          staleAgentMinutes: 90,
+        },
+        managerAgent: {
+          id: "manager-1",
+          name: "Manager",
+          projectId: "project-1",
+          accessToken: "manager-token",
+          createdAt: "2026-06-21T00:00:00.000Z",
+          accessTokenUpdatedAt: "2026-06-21T00:00:00.000Z",
+        },
+        stages: [],
+        githubIssueCache: {
+          issues: [],
+          syncedAt: null,
+          error: null,
+        },
+        managerCycles: [],
+        taskAudit: [],
+        createdAt: "2026-06-21T00:00:00.000Z",
+        lastUpdated: "2026-06-21T00:00:00.000Z",
+      },
+    ]);
+
     render(await Home());
 
     expect(screen.getByText("Signed-in workflow home for jon@example.com")).toBeInTheDocument();
+    expect(getProjectStore().markStaleManagerCyclesForOwner).toHaveBeenCalledWith("user-1");
     expect(getProjectStore().listProjects).toHaveBeenCalledWith("user-1");
+    expect(screen.getByTestId("signed-in-projects")).not.toHaveTextContent("github-secret-token");
+    expect(screen.getByTestId("signed-in-projects")).toHaveTextContent("hasAccessToken");
   });
 
   it("renders the public landing from the default home route for guests", async () => {

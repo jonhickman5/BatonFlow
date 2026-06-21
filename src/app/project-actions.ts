@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getProjectStore } from "@/lib/project-store";
-import type { WorkflowStageInput } from "@/lib/project-store";
+import type { GitHubRepositoryInput, WorkflowProjectSettingsInput, WorkflowStageInput } from "@/lib/project-store";
 import { getCurrentUser } from "@/lib/session";
 
 export type ProjectActionState = {
@@ -36,6 +36,37 @@ function parseWorkflowConfig(formData: FormData): WorkflowConfigPayload {
   return parsedConfig;
 }
 
+function numberFrom(formData: FormData, key: string, fallback: number) {
+  const value = Number.parseInt(valueFrom(formData, key), 10);
+
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function repositoryFrom(formData: FormData): GitHubRepositoryInput | null {
+  const owner = valueFrom(formData, "repositoryOwner");
+  const name = valueFrom(formData, "repositoryName");
+  const accessToken = valueFrom(formData, "repositoryAccessToken");
+  const defaultBranch = valueFrom(formData, "repositoryDefaultBranch") || "main";
+
+  if (!owner && !name && !accessToken) {
+    return null;
+  }
+
+  return {
+    owner,
+    name,
+    accessToken,
+    defaultBranch,
+  };
+}
+
+function settingsFrom(formData: FormData): WorkflowProjectSettingsInput {
+  return {
+    maxTaskSteps: numberFrom(formData, "maxTaskSteps", 20),
+    staleAgentMinutes: numberFrom(formData, "staleAgentMinutes", 90),
+  };
+}
+
 export async function createWorkflowProjectAction(
   _previousState: ProjectActionState,
   formData: FormData,
@@ -54,6 +85,8 @@ export async function createWorkflowProjectAction(
       title: valueFrom(formData, "title"),
       objective: valueFrom(formData, "objective"),
       globalInstructionsMarkdown: config.globalInstructionsMarkdown ?? "",
+      repository: repositoryFrom(formData),
+      settings: settingsFrom(formData),
       stages: config.stages ?? [],
     });
   } catch (error) {
@@ -85,6 +118,8 @@ export async function updateWorkflowProjectAction(
       title: valueFrom(formData, "title"),
       objective: valueFrom(formData, "objective"),
       globalInstructionsMarkdown: config.globalInstructionsMarkdown ?? "",
+      repository: repositoryFrom(formData),
+      settings: settingsFrom(formData),
       stages: config.stages ?? [],
     });
   } catch (error) {

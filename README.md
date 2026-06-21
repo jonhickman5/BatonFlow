@@ -22,8 +22,22 @@ are stored at `.data/batonflow-projects.json`.
 Signed-in workflow projects are stored locally at `.data/batonflow-projects.json`
 by default. Set `BATONFLOW_PROJECT_STORE_PATH` to point the app at a different
 local JSON file while keeping the same persistence interface. This file contains
-manager bearer tokens for copied manager prompts and should be treated as local
-credential material.
+manager bearer tokens and project-scoped GitHub access tokens for copied manager
+prompts and issue syncs. Treat it as local credential material.
+
+Each project can be associated with one GitHub repository. BatonFlow uses the
+stored repository token server-side to sync open GitHub issues and pull
+requests, compute stage eligibility from labels and status, and enforce
+configured work-in-progress caps. The copied manager prompt and browser UI only
+include the BatonFlow manager token; they do not expose the GitHub token.
+
+Manager agents call `POST /api/projects/:projectId/manager/next` to ask
+BatonFlow what to do next. BatonFlow syncs GitHub work items, blocks duplicate
+active cycles, selects the next eligible stage, and starts a manager cycle.
+Managers must then call `POST /api/projects/:projectId/manager/report` with the
+cycle id, spawned subagents, terminal state, duration, and step counts. The
+project dashboard shows current GitHub work-item eligibility, active and failed
+cycles, stale/crashed work, and the task audit history.
 
 Set `BATONFLOW_AUTH_STORE=postgres` to use the Prisma/Postgres-backed auth
 store. Set `BATONFLOW_AUTH_STORE_PATH` to move the local auth JSON file. Both

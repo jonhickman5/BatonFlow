@@ -205,6 +205,43 @@ type WorkflowStageDefinition = {
   output: WorkflowOutputRule;
 };
 
+type GitHubRepositoryConfig = {
+  provider: "github";
+  owner: string;
+  name: string;
+  url: string;
+  defaultBranch: string;
+  accessToken: string;
+  connectedAt: string;       // ISO datetime
+  lastSyncedAt: string | null;
+  syncError: string | null;
+};
+
+type GitHubIssueSnapshot = {
+  id: string;
+  kind?: "github_issue" | "github_pull_request";
+  number: number;
+  title: string;
+  url: string;
+  state: "open" | "closed";
+  labels: string[];
+  assignees: string[];
+  createdAt: string;         // ISO datetime
+  updatedAt: string;         // ISO datetime
+  eligibleStageIds: string[];
+};
+
+type GitHubIssueCache = {
+  issues: GitHubIssueSnapshot[];
+  syncedAt: string | null;
+  error: string | null;
+};
+
+type WorkflowProjectSettings = {
+  maxTaskSteps: number;      // default: 20
+  staleAgentMinutes: number; // default: 90
+};
+
 type ManagerAgentDefinition = {
   id: string;
   name: string;
@@ -214,16 +251,106 @@ type ManagerAgentDefinition = {
   accessTokenUpdatedAt: string; // ISO datetime
 };
 
+type WorkflowAgentStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "crashed"
+  | "cancelled";
+
+type WorkflowManagerCycleStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "stale"
+  | "cancelled"
+  | "skipped";
+
+type WorkflowAgentRun = {
+  id: string;
+  name: string;
+  stageId: string | null;
+  stageName: string | null;
+  taskKey: string | null;
+  taskTitle: string | null;
+  taskUrl: string | null;
+  status: WorkflowAgentStatus;
+  terminalState: string | null;
+  startedAt: string;         // ISO datetime
+  completedAt: string | null;
+  durationMs: number | null;
+  stepCount: number;
+  failureReason: string | null;
+};
+
+type WorkflowManagerCycle = {
+  id: string;
+  managerAgentId: string;
+  stageId: string | null;
+  stageName: string | null;
+  taskKey: string | null;
+  taskTitle: string | null;
+  taskUrl: string | null;
+  status: WorkflowManagerCycleStatus;
+  prompt: string;
+  createdAt: string;         // ISO datetime
+  updatedAt: string;         // ISO datetime
+  completedAt: string | null;
+  lastHeartbeatAt: string | null;
+  maxSteps: number;
+  stepCount: number;
+  agents: WorkflowAgentRun[];
+  failureReason: string | null;
+  terminalSummary: string | null;
+};
+
+type WorkflowTaskAuditEvent = {
+  id: string;
+  cycleId: string | null;
+  agentId: string | null;
+  taskKey: string | null;
+  taskTitle: string | null;
+  taskUrl: string | null;
+  stageId: string | null;
+  stageName: string | null;
+  type:
+    | "github_sync"
+    | "manager_selected"
+    | "agent_reported"
+    | "stale_failure"
+    | "step_limit_exceeded";
+  summary: string;
+  createdAt: string;         // ISO datetime
+  durationMs: number | null;
+  stepCount: number;
+  status: WorkflowAgentStatus | WorkflowManagerCycleStatus | "eligible";
+};
+
 type WorkflowProject = {
   id: string;
   ownerUserId: string;
   title: string;
   objective: string;
   globalInstructionsMarkdown: string;
+  repository: GitHubRepositoryConfig | null;
+  settings: WorkflowProjectSettings;
   managerAgent: ManagerAgentDefinition;
   stages: WorkflowStageDefinition[];
+  githubIssueCache: GitHubIssueCache;
+  managerCycles: WorkflowManagerCycle[];
+  taskAudit: WorkflowTaskAuditEvent[];
   createdAt: string;    // ISO datetime
   lastUpdated: string;  // ISO datetime
+};
+
+type GitHubRepositoryClientConfig = Omit<GitHubRepositoryConfig, "accessToken"> & {
+  hasAccessToken: boolean;
+};
+
+type ClientWorkflowProject = Omit<WorkflowProject, "repository"> & {
+  repository: GitHubRepositoryClientConfig | null;
 };
 ```
 
@@ -233,16 +360,30 @@ Markdown instruction set, priority number, optional input rule, and required
 output rule.
 
 The local project file stores the manager agent bearer token so the copyable
-manager prompt can be reproduced after a reload. Treat `.data` as local
-credential material. Rotating the manager token from the project home invalidates
-older copied prompts.
+manager prompt can be reproduced after a reload. When a repository is connected,
+the same file also stores the project-scoped GitHub token used by the server to
+sync issues and pull requests. Treat `.data` as local credential material.
+Rotating the manager token from the project home invalidates older copied
+prompts.
+
+Repository association is one-to-one for now: one workflow project can reference
+one GitHub repository. The token is only used server-side. The copied manager
+prompt includes BatonFlow's manager bearer token but does not include GitHub
+credentials. Server-rendered pages pass `ClientWorkflowProject` to the browser so
+the UI can show repository status without serializing the GitHub access token.
 
 Output rules drive stage WIP caps. For example, a planning stage can produce
 GitHub issues labeled `Pending Architecture`, prioritize when there are `0`, and
 hold when there are already `3`. An architecture stage can consume issues
 labeled `Pending Architecture` and produce issues labeled
 `Pending Implementation`, with a hold cap of `1` so implementation work is
-prioritized before additional architecture.
+prioritized before additional architecture. Review stages can consume cached
+GitHub pull requests the same way.
+
+The dashboard derives work-item eligibility from cached GitHub issues and pull
+requests, each stage input rule, and each item's labels/status. It also shows
+active manager cycles, failed/stale/crashed work, and a task audit timeline so a
+task's history can be followed through each stage.
 
 The manager prompt tells a Codex manager agent to call:
 
@@ -251,12 +392,25 @@ POST /api/projects/:projectId/manager/next
 ```
 
 The request must include an `Authorization: Bearer <manager-token>` header. The
-body includes the project manager agent id plus `resourceCounts`, a map keyed by
-`kind:status:label`. The manager agent is responsible for filling those counts
-from live tracker state before asking for the next action. The backend validates
-the manager bearer token and manager agent id, evaluates configured stage
-priority, input readiness, refill thresholds, and output caps from those counts,
-then returns an authoritative prompt for the next manager cycle.
+body includes the project manager agent id. BatonFlow validates the manager
+bearer token and manager agent id, marks stale cycles, syncs GitHub issues and
+pull requests when a repository is configured, computes resource counts itself, and returns an
+authoritative prompt with a `dispatch`, `wait`, or `stop` decision. A running
+cycle blocks another manager cycle until it reports back or becomes stale.
+
+After dispatching or observing work, the manager must call:
+
+```http
+POST /api/projects/:projectId/manager/report
+```
+
+The report includes the cycle id, manager agent id, status, terminal summary,
+step count, and every spawned subagent with status, terminal state, duration,
+step count, and failure reason. BatonFlow stores those runs in the cycle and
+adds audit events. Reports with failed or crashed agents mark the cycle as
+failed. A task whose accumulated cycle steps reaches `maxTaskSteps` is blocked
+from further dispatch and creates a `step_limit_exceeded` audit event without
+double-counting that marker as additional work.
 
 ## Database Mapping
 

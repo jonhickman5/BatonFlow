@@ -5,14 +5,22 @@ import { useActionState, useMemo, useState } from "react";
 import { signOutAction } from "@/app/actions";
 import {
   buildManagerAgentPrompt,
+  getActiveManagerCycles,
+  getEligibleGitHubIssuesByStage,
+  getFailedManagerCycles,
+  getTaskStepCount,
+  githubIssueTaskKey,
   sortWorkflowStagesByPriority,
 } from "@/lib/data-structures";
 import type {
+  ClientWorkflowProject,
+  GitHubIssueSnapshot,
   WorkflowInputRule,
+  WorkflowManagerCycle,
   WorkflowOutputRule,
-  WorkflowProject,
   WorkflowResourceKind,
   WorkflowStageDefinition,
+  WorkflowTaskAuditEvent,
 } from "@/lib/data-structures";
 import {
   createWorkflowProjectAction,
@@ -23,7 +31,7 @@ import type { ProjectActionState } from "@/app/project-actions";
 
 type SignedInHomeProps = {
   backendUrl: string;
-  projects: WorkflowProject[];
+  projects: ClientWorkflowProject[];
   user: {
     email: string;
     displayName: string | null;
@@ -135,6 +143,32 @@ function workflowConfig(globalInstructionsMarkdown: string, stages: WorkflowStag
     globalInstructionsMarkdown,
     stages,
   });
+}
+
+function formatDate(value: string | null) {
+  if (!value) {
+    return "Never";
+  }
+
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function formatDuration(durationMs: number | null) {
+  if (durationMs === null) {
+    return "In progress";
+  }
+
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.floor((durationMs % 60_000) / 1000);
+
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function repositoryLabel(project: ClientWorkflowProject) {
+  return project.repository ? `${project.repository.owner}/${project.repository.name}` : "No repository";
 }
 
 function numberFromInput(value: string, fallback: number) {
@@ -358,6 +392,47 @@ function ProjectForm() {
         </label>
       </div>
 
+      <fieldset className="rule-fieldset">
+        <legend>GitHub repository</legend>
+        <div className="compact-grid">
+          <label>
+            <span>Owner</span>
+            <input name="repositoryOwner" placeholder="jonhickman5" />
+          </label>
+          <label>
+            <span>Repository</span>
+            <input name="repositoryName" placeholder="GameGlass" />
+          </label>
+          <label>
+            <span>Default branch</span>
+            <input defaultValue="main" name="repositoryDefaultBranch" />
+          </label>
+          <label>
+            <span>GitHub token</span>
+            <input
+              autoComplete="off"
+              name="repositoryAccessToken"
+              placeholder="Fine-grained token with Issues read access"
+              type="password"
+            />
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset className="rule-fieldset">
+        <legend>Safety limits</legend>
+        <div className="compact-grid">
+          <label>
+            <span>Max task steps</span>
+            <input defaultValue={20} min={1} name="maxTaskSteps" type="number" />
+          </label>
+          <label>
+            <span>Stale after minutes</span>
+            <input defaultValue={90} min={1} name="staleAgentMinutes" type="number" />
+          </label>
+        </div>
+      </fieldset>
+
       <label className="markdown-editor">
         <span>global-instructions.md</span>
         <textarea
@@ -397,7 +472,283 @@ function ProjectForm() {
   );
 }
 
-function ProjectCard({ backendUrl, project }: { backendUrl: string; project: WorkflowProject }) {
+function DashboardMetric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="dashboard-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function IssueList({ issues }: { issues: GitHubIssueSnapshot[] }) {
+  if (issues.length === 0) {
+    return <p className="muted-copy">No eligible work items for this stage.</p>;
+  }
+
+  return (
+    <ul className="issue-list">
+      {issues.slice(0, 4).map((issue) => (
+        <li key={issue.id}>
+          <a href={issue.url} rel="noreferrer" target="_blank">
+            #{issue.number} {issue.title}
+          </a>
+          <span>{issue.labels.join(", ") || "No labels"}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function StageEligibilityBoard({ project }: { project: ClientWorkflowProject }) {
+  const stageIssues = getEligibleGitHubIssuesByStage(project);
+
+  return (
+    <section className="dashboard-panel" aria-label={`${project.title} stage issue eligibility`}>
+      <div className="dashboard-panel-heading">
+        <p className="eyebrow">Stage eligibility</p>
+        <h4>GitHub work items by stage</h4>
+      </div>
+      <div className="stage-eligibility-grid">
+        {stageIssues.map(({ stage, issues }) => (
+          <article className="stage-eligibility-row" key={stage.id}>
+            <div>
+              <strong>
+                {stage.priority}. {stage.name}
+              </strong>
+              <p>
+                {stage.input
+                  ? `${stage.input.label || "Unlabeled"} / ${stage.input.status}`
+                  : "No upstream GitHub work item input"}
+              </p>
+            </div>
+            <DashboardMetric label="Eligible" value={issues.length} />
+            <IssueList issues={issues} />
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WorkCycleRow({ cycle }: { cycle: WorkflowManagerCycle }) {
+  return (
+    <li>
+      <div>
+        <strong>{cycle.taskTitle || cycle.stageName || cycle.status}</strong>
+        <span>
+          {cycle.stageName || "No stage"} · {cycle.status} · {cycle.stepCount}/{cycle.maxSteps} steps
+        </span>
+      </div>
+      <span>{cycle.lastHeartbeatAt ? `Heartbeat ${formatDate(cycle.lastHeartbeatAt)}` : formatDate(cycle.createdAt)}</span>
+      {cycle.failureReason ? <p>{cycle.failureReason}</p> : null}
+      {cycle.agents.length > 0 ? (
+        <ul className="agent-run-list" aria-label={`${cycle.id} subagents`}>
+          {cycle.agents.map((agent) => (
+            <li key={agent.id}>
+              <strong>{agent.name}</strong>
+              <span>
+                {agent.stageName || cycle.stageName || "No stage"} · {agent.status} · {agent.stepCount} steps ·{" "}
+                {formatDuration(agent.durationMs)}
+              </span>
+              {agent.terminalState ? <p>{agent.terminalState}</p> : null}
+              {agent.failureReason ? <p>{agent.failureReason}</p> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+function TaskLifespan({ audit }: { audit: WorkflowTaskAuditEvent[] }) {
+  const orderedAudit = [...audit].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const taskRows = [...orderedAudit.reduce((tasks, event) => {
+    if (!event.taskKey) {
+      return tasks;
+    }
+
+    const current = tasks.get(event.taskKey) ?? {
+      taskKey: event.taskKey,
+      title: event.taskTitle ?? event.taskKey,
+      url: event.taskUrl,
+      firstSeen: event.createdAt,
+      latest: event.createdAt,
+      steps: 0,
+      durationMs: 0,
+      stages: new Map<string, number>(),
+      status: event.status,
+    };
+
+    current.firstSeen = current.firstSeen < event.createdAt ? current.firstSeen : event.createdAt;
+    current.latest = current.latest > event.createdAt ? current.latest : event.createdAt;
+    current.steps += event.stepCount;
+    current.durationMs += event.durationMs ?? 0;
+    if (event.createdAt >= current.latest) {
+      current.status = event.status;
+    }
+
+    if (event.stageName && event.durationMs) {
+      current.stages.set(event.stageName, (current.stages.get(event.stageName) ?? 0) + event.durationMs);
+    }
+
+    tasks.set(event.taskKey, current);
+    return tasks;
+  }, new Map<string, {
+    taskKey: string;
+    title: string;
+    url: string | null;
+    firstSeen: string;
+    latest: string;
+    steps: number;
+    durationMs: number;
+    stages: Map<string, number>;
+    status: string;
+  }>()).values()].sort((left, right) => right.latest.localeCompare(left.latest));
+
+  if (taskRows.length === 0) {
+    return <p className="muted-copy">No task lifespan history yet.</p>;
+  }
+
+  return (
+    <div className="table-list" role="table" aria-label="Task lifespan">
+      {taskRows.map((task) => (
+        <div className="table-row" role="row" key={task.taskKey}>
+          <span>
+            {task.url ? (
+              <a href={task.url} rel="noreferrer" target="_blank">
+                {task.title}
+              </a>
+            ) : (
+              task.title
+            )}
+          </span>
+          <span>{task.status}</span>
+          <span>{task.steps} steps</span>
+          <span>{formatDuration(task.durationMs)}</span>
+          <span>
+            {[...task.stages.entries()]
+              .map(([stage, duration]) => `${stage}: ${formatDuration(duration)}`)
+              .join("; ") || "No stage time"}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProjectDashboard({ project }: { project: ClientWorkflowProject }) {
+  const activeCycles = getActiveManagerCycles(project);
+  const failedCycles = getFailedManagerCycles(project);
+  const eligibleIssueCount = project.githubIssueCache.issues.filter(
+    (issue) =>
+      issue.eligibleStageIds.length > 0 &&
+      getTaskStepCount(project, githubIssueTaskKey(issue)) < project.settings.maxTaskSteps,
+  ).length;
+
+  return (
+    <div className="project-dashboard">
+      <section className="dashboard-panel" aria-label={`${project.title} repository status`}>
+        <div className="dashboard-panel-heading">
+          <p className="eyebrow">Repository</p>
+          <h4>{repositoryLabel(project)}</h4>
+        </div>
+        {project.repository ? (
+          <div className="repo-status-grid">
+            <DashboardMetric label="Default branch" value={project.repository.defaultBranch} />
+            <DashboardMetric label="Cached issues" value={project.githubIssueCache.issues.length} />
+            <DashboardMetric label="Last sync" value={formatDate(project.repository.lastSyncedAt)} />
+            <DashboardMetric label="Max steps" value={project.settings.maxTaskSteps} />
+            <a className="repo-link" href={project.repository.url} rel="noreferrer" target="_blank">
+              Open repository
+            </a>
+            {project.repository.syncError ? (
+              <p className="form-error">GitHub sync failed: {project.repository.syncError}</p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="muted-copy">Associate one GitHub repository to let BatonFlow manage issue eligibility.</p>
+        )}
+      </section>
+
+      <div className="dashboard-summary">
+        <DashboardMetric label="Eligible issues" value={eligibleIssueCount} />
+        <DashboardMetric label="Active cycles" value={activeCycles.length} />
+        <DashboardMetric label="Needs review" value={failedCycles.length} />
+        <DashboardMetric label="Stale minutes" value={project.settings.staleAgentMinutes} />
+      </div>
+
+      <StageEligibilityBoard project={project} />
+
+      <section className="dashboard-panel" aria-label={`${project.title} active work`}>
+        <div className="dashboard-panel-heading">
+          <p className="eyebrow">Active work</p>
+          <h4>Running manager and subagent cycles</h4>
+        </div>
+        {activeCycles.length > 0 ? (
+          <ul className="work-list">
+            {activeCycles.map((cycle) => (
+              <WorkCycleRow cycle={cycle} key={cycle.id} />
+            ))}
+          </ul>
+        ) : (
+          <p className="muted-copy">No active manager cycles.</p>
+        )}
+      </section>
+
+      <section className="dashboard-panel attention-panel" aria-label={`${project.title} work needing review`}>
+        <div className="dashboard-panel-heading">
+          <p className="eyebrow">Attention</p>
+          <h4>Failed, blocked, stale, or crashed work</h4>
+        </div>
+        {failedCycles.length > 0 ? (
+          <ul className="work-list">
+            {failedCycles.map((cycle) => (
+              <WorkCycleRow cycle={cycle} key={cycle.id} />
+            ))}
+          </ul>
+        ) : (
+          <p className="muted-copy">No failed or stale work.</p>
+        )}
+      </section>
+
+      <section className="dashboard-panel" aria-label={`${project.title} task lifespan`}>
+        <div className="dashboard-panel-heading">
+          <p className="eyebrow">Task lifespan</p>
+          <h4>Time and steps by task</h4>
+        </div>
+        <TaskLifespan audit={project.taskAudit} />
+      </section>
+
+      <section className="dashboard-panel" aria-label={`${project.title} audit history`}>
+        <div className="dashboard-panel-heading">
+          <p className="eyebrow">Audit</p>
+          <h4>Recent workflow events</h4>
+        </div>
+        {project.taskAudit.length > 0 ? (
+          <div className="table-list" role="table" aria-label="Recent workflow audit">
+            {[...project.taskAudit]
+              .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+              .slice(0, 8)
+              .map((event) => (
+              <div className="table-row" role="row" key={event.id}>
+                <span>{formatDate(event.createdAt)}</span>
+                <span>{event.type}</span>
+                <span>{event.stageName ?? "Project"}</span>
+                <span>{event.summary}</span>
+                <span>{event.stepCount} steps</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted-copy">No audit events yet.</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ProjectCard({ backendUrl, project }: { backendUrl: string; project: ClientWorkflowProject }) {
   const [actionState, formAction] = useActionState(updateWorkflowProjectAction, initialActionState);
   const [title, setTitle] = useState(project.title);
   const [objective, setObjective] = useState(project.objective);
@@ -464,6 +815,8 @@ function ProjectCard({ backendUrl, project }: { backendUrl: string; project: Wor
         ))}
       </div>
 
+      <ProjectDashboard project={project} />
+
       <details className="manager-prompt-preview">
         <summary>Manager prompt</summary>
         <textarea
@@ -492,6 +845,52 @@ function ProjectCard({ backendUrl, project }: { backendUrl: string; project: Wor
             />
           </label>
         </div>
+
+        <fieldset className="rule-fieldset">
+          <legend>GitHub repository</legend>
+          <div className="compact-grid">
+            <label>
+              <span>Owner</span>
+              <input defaultValue={project.repository?.owner ?? ""} name="repositoryOwner" />
+            </label>
+            <label>
+              <span>Repository</span>
+              <input defaultValue={project.repository?.name ?? ""} name="repositoryName" />
+            </label>
+            <label>
+              <span>Default branch</span>
+              <input defaultValue={project.repository?.defaultBranch ?? "main"} name="repositoryDefaultBranch" />
+            </label>
+            <label>
+              <span>GitHub token</span>
+              <input
+                autoComplete="off"
+                name="repositoryAccessToken"
+                placeholder={project.repository ? "Leave blank to keep existing token" : "GitHub token"}
+                type="password"
+              />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="rule-fieldset">
+          <legend>Safety limits</legend>
+          <div className="compact-grid">
+            <label>
+              <span>Max task steps</span>
+              <input defaultValue={project.settings.maxTaskSteps} min={1} name="maxTaskSteps" type="number" />
+            </label>
+            <label>
+              <span>Stale after minutes</span>
+              <input
+                defaultValue={project.settings.staleAgentMinutes}
+                min={1}
+                name="staleAgentMinutes"
+                type="number"
+              />
+            </label>
+          </div>
+        </fieldset>
 
         <label className="markdown-editor">
           <span>global-instructions.md</span>
