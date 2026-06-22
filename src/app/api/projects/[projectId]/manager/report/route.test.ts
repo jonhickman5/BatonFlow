@@ -59,6 +59,8 @@ function mockProjectStore(getProject = vi.fn().mockResolvedValue(workflowProject
     getProject,
     createProject: vi.fn(),
     updateProject: vi.fn(),
+    deleteProject: vi.fn(),
+    deleteProjectsForOwner: vi.fn(),
     rotateManagerAccessToken: vi.fn(),
     recordGitHubIssueSync: vi.fn(),
     startManagerCycle: vi.fn(),

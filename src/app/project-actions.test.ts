@@ -7,6 +7,7 @@ import { getProjectStore } from "@/lib/project-store";
 import { getCurrentUser } from "@/lib/session";
 import {
   createWorkflowProjectAction,
+  deleteWorkflowProjectAction,
   updateWorkflowProjectAction,
 } from "./project-actions";
 
@@ -128,6 +129,7 @@ describe("project actions", () => {
     vi.mocked(getAuthStore).mockReturnValue({
       findUserByNormalizedEmail: vi.fn(),
       createUser: vi.fn(),
+      deleteUser: vi.fn(),
       createSession: vi.fn(),
       findSessionByTokenHash: vi.fn(),
       deleteSessionByTokenHash: vi.fn(),
@@ -140,6 +142,8 @@ describe("project actions", () => {
       getProject: vi.fn(),
       createProject: vi.fn().mockResolvedValue({ id: "project-1" }),
       updateProject: vi.fn().mockResolvedValue({ id: "project-1" }),
+      deleteProject: vi.fn(),
+      deleteProjectsForOwner: vi.fn(),
       rotateManagerAccessToken: vi.fn(),
       recordGitHubIssueSync: vi.fn(),
       startManagerCycle: vi.fn(),
@@ -230,5 +234,21 @@ describe("project actions", () => {
     expect(result).toEqual({ message: "Project saved." });
     expect(updateInput.repository).toBeNull();
     expect(fetchGitHubRepositories).not.toHaveBeenCalled();
+  });
+
+  it("deletes projects owned by the current user", async () => {
+    const form = formData({ projectId: "project-1" });
+
+    await expect(deleteWorkflowProjectAction(form)).resolves.toBeUndefined();
+    expect(getProjectStore().deleteProject).toHaveBeenCalledWith("user-1", "project-1");
+    expect(revalidatePath).toHaveBeenCalledWith("/");
+  });
+
+  it("returns project deletion errors", async () => {
+    vi.mocked(getProjectStore().deleteProject).mockRejectedValue(new Error("Project not found."));
+
+    await expect(deleteWorkflowProjectAction(formData({ projectId: "missing" }))).rejects.toThrow(
+      "Project not found.",
+    );
   });
 });

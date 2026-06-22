@@ -153,6 +153,17 @@ export async function updateWorkflowProjectAction(
   return { message: "Project saved." };
 }
 
+export async function deleteWorkflowProjectAction(formData: FormData) {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    redirect("/sign-in");
+  }
+
+  await getProjectStore().deleteProject(user.id, valueFrom(formData, "projectId"));
+  revalidatePath("/");
+}
+
 export async function rotateManagerAccessTokenAction(formData: FormData) {
   const user = await getCurrentUser();
 

@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "prisma generate && playwright install chromium && playwright test",
+    "test:e2e:live-github": "prisma generate && playwright install chromium && playwright test tests/e2e/live-github.spec.ts",
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",
     "verify": "npm run lint && npm run prisma:generate && npm run typecheck && npm run prisma:validate && npm run test:coverage && npm run test:e2e && npm run build"

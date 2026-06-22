@@ -91,11 +91,31 @@ export async function POST(request: Request, context: { params: Promise<{ projec
 
       nextProject = await store.recordGitHubIssueSync(nextProject.id, issues);
     } catch (error) {
+      const syncError = error instanceof Error ? error.message : "GitHub issue sync failed.";
+
       nextProject = await store.recordGitHubIssueSync(
         nextProject.id,
         nextProject.githubIssueCache.issues,
-        error instanceof Error ? error.message : "GitHub issue sync failed.",
+        syncError,
       );
+
+      return NextResponse.json({
+        projectId: nextProject.id,
+        decision: "stop",
+        reason: "github_sync_failed",
+        selectedStageId: null,
+        selectedStageName: null,
+        cycleId: null,
+        taskKey: null,
+        taskTitle: null,
+        taskUrl: null,
+        generatedAt: new Date().toISOString(),
+        prompt: [
+          `Could not sync GitHub issues for "${nextProject.title}".`,
+          syncError,
+          "Do not dispatch work from cached GitHub labels. Stop this manager cycle and review the GitHub connection before requesting more work.",
+        ].join("\n"),
+      });
     }
   }
 

@@ -56,5 +56,28 @@ test("creates an account and lands on the signed-in home", async ({ page }) => {
   await page.getByLabel("Email").fill(email);
   await expect(page.getByText("An account with this email already exists.")).toBeVisible();
 
+  await page.getByRole("tab", { name: "Sign in" }).click();
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill("correct-horse-battery-staple");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL("/");
+
+  await page.goto("/account");
+  await page.getByRole("button", { name: "Delete account" }).click();
+  await expect(page).toHaveURL("/");
+
+  await page.goto("/sign-in");
+  await page.getByRole("tab", { name: "Create account" }).click();
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Display name").fill("Playwright User Again");
+  await page.getByLabel("Password", { exact: true }).fill("different-correct-horse");
+  await page.getByLabel("Confirm password").fill("different-correct-horse");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.getByRole("heading", { name: "Good to see you, Playwright User Again." })).toBeVisible();
+
+  await page.goto("/account");
+  await page.getByRole("button", { name: "Delete account" }).click();
+  await expect(page).toHaveURL("/");
+
   expect(serverErrors).toEqual([]);
 });

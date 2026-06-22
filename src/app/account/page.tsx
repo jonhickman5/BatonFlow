@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { signOutAction } from "@/app/actions";
+import { deleteAccountAction, signOutAction } from "@/app/actions";
 import { getCurrentUser } from "@/lib/session";
 
 export default async function AccountPage() {
@@ -44,6 +44,11 @@ export default async function AccountPage() {
             <dd>{user.createdAt.toLocaleString()}</dd>
           </div>
         </dl>
+        <form action={deleteAccountAction} className="danger-action">
+          <button type="submit" className="danger-button">
+            Delete account
+          </button>
+        </form>
       </section>
     </main>
   );

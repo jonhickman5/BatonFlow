@@ -199,6 +199,15 @@ export type GitHubIssueCache = {
   error: string | null;
 };
 
+export type GitHubIssueSwimlane = {
+  id: string;
+  title: string;
+  stageId: string | null;
+  stageName: string | null;
+  description: string;
+  issues: GitHubIssueSnapshot[];
+};
+
 export type WorkflowProjectSettings = {
   maxTaskSteps: number;
   staleAgentMinutes: number;
@@ -453,6 +462,41 @@ export function getEligibleGitHubIssuesByStage(
 
     return { stage, issues };
   });
+}
+
+export function getGitHubIssueSwimlanes(project: WorkflowProjectReadModel): GitHubIssueSwimlane[] {
+  const orderedStages = sortWorkflowStagesByPriority(project.stages);
+  const lanes = orderedStages.map((stage) => ({
+    id: stage.id,
+    title: stage.name,
+    stageId: stage.id,
+    stageName: stage.name,
+    description: stage.input
+      ? describeWorkflowResource(stage.input)
+      : "No GitHub issue input rule",
+    issues: [] as GitHubIssueSnapshot[],
+  }));
+  const unmatchedLane: GitHubIssueSwimlane = {
+    id: "unmatched",
+    title: "Unmatched",
+    stageId: null,
+    stageName: null,
+    description: "Open GitHub items that do not match any stage input rule",
+    issues: [],
+  };
+  const laneByStageId = new Map(lanes.map((lane) => [lane.stageId, lane]));
+
+  for (const issue of project.githubIssueCache.issues) {
+    const matchingStage = orderedStages.find((stage) => issue.eligibleStageIds.includes(stage.id));
+
+    if (matchingStage) {
+      laneByStageId.get(matchingStage.id)?.issues.push(issue);
+    } else {
+      unmatchedLane.issues.push(issue);
+    }
+  }
+
+  return [...lanes, unmatchedLane];
 }
 
 export function applyIssueEligibilityToProject(project: WorkflowProject): WorkflowProject {

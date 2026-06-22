@@ -116,6 +116,8 @@ function mockProjectStore(getProject = vi.fn().mockResolvedValue(workflowProject
     getProject,
     createProject: vi.fn(),
     updateProject: vi.fn(),
+    deleteProject: vi.fn(),
+    deleteProjectsForOwner: vi.fn(),
     rotateManagerAccessToken: vi.fn(),
     recordGitHubIssueSync: vi.fn(),
     startManagerCycle: vi.fn().mockResolvedValue(workflowProject),
@@ -186,6 +188,7 @@ describe("POST /api/projects/[projectId]/manager/next", () => {
     vi.mocked(getAuthStore).mockReturnValue({
       findUserByNormalizedEmail: vi.fn(),
       createUser: vi.fn(),
+      deleteUser: vi.fn(),
       createSession: vi.fn(),
       findSessionByTokenHash: vi.fn(),
       deleteSessionByTokenHash: vi.fn(),
@@ -216,6 +219,77 @@ describe("POST /api/projects/[projectId]/manager/next", () => {
       "connected-account-token",
     );
     expect(store.recordGitHubIssueSync).toHaveBeenCalledWith(projectWithRepository.id, syncedIssues);
+  });
+
+  it("stops without dispatching when GitHub issue sync fails", async () => {
+    const projectWithRepository: WorkflowProject = {
+      ...workflowProject,
+      repository: {
+        provider: "github",
+        githubRepositoryId: 123,
+        owner: "jonhickman5",
+        name: "GameGlass",
+        fullName: "jonhickman5/GameGlass",
+        url: "https://github.com/jonhickman5/GameGlass",
+        defaultBranch: "main",
+        connectedAt: "2026-06-21T00:00:00.000Z",
+        lastSyncedAt: "2026-06-21T00:00:00.000Z",
+        syncError: null,
+      },
+    };
+    const failedProject: WorkflowProject = {
+      ...projectWithRepository,
+      repository: {
+        ...projectWithRepository.repository!,
+        syncError: "GitHub issue sync failed with 401.",
+      },
+      githubIssueCache: {
+        ...projectWithRepository.githubIssueCache,
+        error: "GitHub issue sync failed with 401.",
+      },
+    };
+    const store = mockProjectStore(vi.fn().mockResolvedValue(projectWithRepository));
+
+    vi.mocked(getAuthStore).mockReturnValue({
+      findUserByNormalizedEmail: vi.fn(),
+      createUser: vi.fn(),
+      deleteUser: vi.fn(),
+      createSession: vi.fn(),
+      findSessionByTokenHash: vi.fn(),
+      deleteSessionByTokenHash: vi.fn(),
+      getGitHubConnection: vi.fn().mockResolvedValue({
+        userId: "user-1",
+        githubUserId: 123,
+        login: "jonhickman5",
+        name: "Jon",
+        avatarUrl: null,
+        accessToken: "expired-token",
+        tokenType: "bearer",
+        scope: "repo read:user user:email",
+        connectedAt: "2026-06-21T00:00:00.000Z",
+        lastUpdated: "2026-06-21T00:00:00.000Z",
+      }),
+      upsertGitHubConnection: vi.fn(),
+      deleteGitHubConnection: vi.fn(),
+    });
+    vi.mocked(fetchGitHubIssues).mockRejectedValue(new Error("GitHub issue sync failed with 401."));
+    vi.mocked(store.markStaleManagerCyclesForProject).mockResolvedValue(projectWithRepository);
+    vi.mocked(store.recordGitHubIssueSync).mockResolvedValue(failedProject);
+
+    const response = await POST(request({ managerAgentId: "manager-1" }), context());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.decision).toBe("stop");
+    expect(body.reason).toBe("github_sync_failed");
+    expect(body.cycleId).toBeNull();
+    expect(body.prompt).toContain("Do not dispatch work from cached GitHub labels");
+    expect(store.recordGitHubIssueSync).toHaveBeenCalledWith(
+      projectWithRepository.id,
+      projectWithRepository.githubIssueCache.issues,
+      "GitHub issue sync failed with 401.",
+    );
+    expect(store.startManagerCycle).not.toHaveBeenCalled();
   });
 
   it("rejects missing projects, wrong manager ids, missing counts, and invalid JSON", async () => {

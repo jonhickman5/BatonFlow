@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbMocks = vi.hoisted(() => ({
   userAccountCreate: vi.fn(),
+  userAccountDeleteMany: vi.fn(),
   userAccountFindUnique: vi.fn(),
   userGitHubConnectionDeleteMany: vi.fn(),
   userGitHubConnectionFindUnique: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     userAccount: {
       create: dbMocks.userAccountCreate,
+      deleteMany: dbMocks.userAccountDeleteMany,
       findUnique: dbMocks.userAccountFindUnique,
     },
     userSession: {
@@ -113,6 +115,14 @@ describe("PrismaAuthStore", () => {
     dbMocks.userAccountCreate.mockRejectedValueOnce(knownPrismaError("P2002"));
 
     await expect(store.createUser(createUserInput)).rejects.toBeInstanceOf(DuplicateAccountEmailError);
+  });
+
+  it("deletes users by id", async () => {
+    dbMocks.userAccountDeleteMany.mockResolvedValueOnce({ count: 1 });
+
+    await expect(store.deleteUser("user-1")).resolves.toBeUndefined();
+
+    expect(dbMocks.userAccountDeleteMany).toHaveBeenCalledWith({ where: { id: "user-1" } });
   });
 
   it("creates, finds, and deletes sessions", async () => {

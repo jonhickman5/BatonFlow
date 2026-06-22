@@ -14,6 +14,7 @@ vi.mock("@/app/actions", () => ({
 
 vi.mock("@/app/project-actions", () => ({
   createWorkflowProjectAction: vi.fn(async () => ({ message: "Project created." })),
+  deleteWorkflowProjectAction: vi.fn(),
   rotateManagerAccessTokenAction: vi.fn(),
   updateWorkflowProjectAction: vi.fn(async () => ({ message: "Project saved." })),
 }));
@@ -241,14 +242,21 @@ describe("SignedInHome", () => {
     expect(card.getAllByText("1. Implementation").length).toBeGreaterThan(0);
     expect(card.getByText("jonhickman5/GameGlass")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Connected as jonhickman5" })).toBeInTheDocument();
-    expect(screen.getAllByRole("combobox", { name: "GitHub repository" })[1]).toHaveValue(
-      "jonhickman5/GameGlass",
-    );
+
+    fireEvent.click(card.getByRole("button", { name: "Open" }));
+
     expect(card.getAllByText(/Implement repository dashboard/).length).toBeGreaterThan(0);
     expect(card.getAllByText("Subagent crashed.").length).toBeGreaterThan(0);
     expect(card.getByText("Implementation subagent")).toBeInTheDocument();
     expect(card.getByText("Process exited unexpectedly.")).toBeInTheDocument();
     expect(card.getByText(/crashed · 8 steps · 15m 0s/)).toBeInTheDocument();
+
+    fireEvent.click(card.getByRole("button", { name: "Edit" }));
+
+    expect(screen.getAllByRole("combobox", { name: "GitHub repository" })[1]).toHaveValue(
+      "jonhickman5/GameGlass",
+    );
+    expect(card.getByRole("button", { name: "Delete project" })).toBeInTheDocument();
     expect(card.getByRole("button", { name: "Rotate token" })).toBeInTheDocument();
     expect(card.queryByText("github-secret-token")).not.toBeInTheDocument();
     expect(JSON.stringify(sanitizedWorkflowProject)).not.toContain("github-secret-token");

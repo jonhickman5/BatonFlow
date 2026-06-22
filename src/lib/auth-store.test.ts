@@ -53,6 +53,32 @@ describe("JsonFileAuthStore", () => {
     );
   });
 
+  it("deletes users with their sessions and GitHub account connection", async () => {
+    const user = await store.createUser(userInput);
+
+    await store.createSession({
+      tokenHash: "session-token-hash",
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await store.upsertGitHubConnection({
+      userId: user.id,
+      githubUserId: 123,
+      login: "jonhickman5",
+      name: "Jon",
+      avatarUrl: null,
+      accessToken: "github-token",
+      tokenType: "bearer",
+      scope: "repo",
+    });
+
+    await store.deleteUser(user.id);
+
+    await expect(store.findUserByNormalizedEmail("test@example.com")).resolves.toBeNull();
+    await expect(store.findSessionByTokenHash("session-token-hash")).resolves.toBeNull();
+    await expect(store.getGitHubConnection(user.id)).resolves.toBeNull();
+  });
+
   it("creates, reads, and deletes sessions", async () => {
     const user = await store.createUser(userInput);
     const expiresAt = new Date(Date.now() + 60_000);

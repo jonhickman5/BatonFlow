@@ -54,6 +54,7 @@ export type AuthSessionWithUser = {
 export interface AuthStore {
   findUserByNormalizedEmail(normalizedEmail: string): Promise<UserAccount | null>;
   createUser(input: CreateAuthUserInput): Promise<UserAccount>;
+  deleteUser(userId: string): Promise<void>;
   createSession(input: CreateAuthSessionInput): Promise<void>;
   findSessionByTokenHash(tokenHash: string): Promise<AuthSessionWithUser | null>;
   deleteSessionByTokenHash(tokenHash: string): Promise<void>;
@@ -160,6 +161,14 @@ export class PrismaAuthStore implements AuthStore {
       const user = await prisma.userAccount.create({ data: input });
 
       return toAuthUser(user);
+    } catch (error) {
+      mapPrismaError(error);
+    }
+  }
+
+  async deleteUser(userId: string): Promise<void> {
+    try {
+      await prisma.userAccount.deleteMany({ where: { id: userId } });
     } catch (error) {
       mapPrismaError(error);
     }
@@ -284,6 +293,20 @@ export class JsonFileAuthStore implements AuthStore {
       await this.writeSnapshot(snapshot);
 
       return user;
+    });
+  }
+
+  async deleteUser(userId: string): Promise<void> {
+    await this.enqueueMutation(async () => {
+      const snapshot = await this.readSnapshot();
+
+      snapshot.users = snapshot.users.filter((user) => user.id !== userId);
+      snapshot.sessions = snapshot.sessions.filter((session) => session.userId !== userId);
+      snapshot.githubConnections = snapshot.githubConnections.filter(
+        (connection) => connection.userId !== userId,
+      );
+      snapshot.lastUpdated = new Date().toISOString();
+      await this.writeSnapshot(snapshot);
     });
   }
 

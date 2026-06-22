@@ -125,6 +125,8 @@ export interface ProjectStore {
   getProject(projectId: string): Promise<WorkflowProject | null>;
   createProject(input: CreateWorkflowProjectInput): Promise<WorkflowProject>;
   updateProject(input: UpdateWorkflowProjectInput): Promise<WorkflowProject>;
+  deleteProject(ownerUserId: string, projectId: string): Promise<void>;
+  deleteProjectsForOwner(ownerUserId: string): Promise<void>;
   rotateManagerAccessToken(ownerUserId: string, projectId: string): Promise<WorkflowProject>;
   recordGitHubIssueSync(projectId: string, issues: GitHubIssueSnapshot[], error?: string | null): Promise<WorkflowProject>;
   startManagerCycle(input: StartManagerCycleInput): Promise<WorkflowProject>;
@@ -459,6 +461,33 @@ export class JsonFileProjectStore implements ProjectStore {
       await this.writeSnapshot(snapshot);
 
       return updatedProject;
+    });
+  }
+
+  async deleteProject(ownerUserId: string, projectId: string): Promise<void> {
+    await this.enqueueMutation(async () => {
+      const snapshot = await this.readSnapshot();
+      const nextProjects = snapshot.projects.filter(
+        (project) => !(project.id === projectId && project.ownerUserId === ownerUserId),
+      );
+
+      if (nextProjects.length === snapshot.projects.length) {
+        throw new Error("Project not found.");
+      }
+
+      snapshot.projects = nextProjects;
+      snapshot.lastUpdated = new Date().toISOString();
+      await this.writeSnapshot(snapshot);
+    });
+  }
+
+  async deleteProjectsForOwner(ownerUserId: string): Promise<void> {
+    await this.enqueueMutation(async () => {
+      const snapshot = await this.readSnapshot();
+
+      snapshot.projects = snapshot.projects.filter((project) => project.ownerUserId !== ownerUserId);
+      snapshot.lastUpdated = new Date().toISOString();
+      await this.writeSnapshot(snapshot);
     });
   }
 

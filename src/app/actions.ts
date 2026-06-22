@@ -8,8 +8,9 @@ import {
   getAuthStore,
 } from "@/lib/auth-store";
 import { hashPassword, verifyPassword } from "@/lib/passwords";
+import { getProjectStore } from "@/lib/project-store";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { clearSession, createSession } from "@/lib/session";
+import { clearSession, createSession, getCurrentUser } from "@/lib/session";
 
 type AuthState = {
   error?: string;
@@ -113,6 +114,20 @@ export async function signInAction(_previousState: AuthState, formData: FormData
 }
 
 export async function signOutAction() {
+  await clearSession();
+  redirect("/");
+}
+
+export async function deleteAccountAction() {
+  const authStore = getAuthStore();
+  const sessionUser = await getCurrentUser();
+
+  if (!sessionUser) {
+    redirect("/sign-in");
+  }
+
+  await getProjectStore().deleteProjectsForOwner(sessionUser.id);
+  await authStore.deleteUser(sessionUser.id);
   await clearSession();
   redirect("/");
 }

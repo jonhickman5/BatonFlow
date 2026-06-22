@@ -5,12 +5,14 @@ import { useActionState, useMemo, useState } from "react";
 import { signOutAction } from "@/app/actions";
 import {
   buildManagerAgentPrompt,
+  buildManagerNextPrompt,
   getActiveManagerCycles,
-  getEligibleGitHubIssuesByStage,
   getFailedManagerCycles,
+  getGitHubIssueSwimlanes,
   getTaskStepCount,
   githubIssueTaskKey,
   sortWorkflowStagesByPriority,
+  workflowResourceCountsFromIssues,
 } from "@/lib/data-structures";
 import type {
   ClientWorkflowProject,
@@ -26,6 +28,7 @@ import type {
 } from "@/lib/data-structures";
 import {
   createWorkflowProjectAction,
+  deleteWorkflowProjectAction,
   rotateManagerAccessTokenAction,
   updateWorkflowProjectAction,
 } from "@/app/project-actions";
@@ -557,50 +560,52 @@ function RepositoryPicker({
   );
 }
 
-function IssueList({ issues }: { issues: GitHubIssueSnapshot[] }) {
-  if (issues.length === 0) {
-    return <p className="muted-copy">No eligible work items for this stage.</p>;
-  }
+function IssueCard({ issue, project }: { issue: GitHubIssueSnapshot; project: ClientWorkflowProject }) {
+  const taskKey = githubIssueTaskKey(issue);
+  const stepCount = getTaskStepCount(project, taskKey);
+  const blocked = stepCount >= project.settings.maxTaskSteps;
 
   return (
-    <ul className="issue-list">
-      {issues.slice(0, 4).map((issue) => (
-        <li key={issue.id}>
-          <a href={issue.url} rel="noreferrer" target="_blank">
-            #{issue.number} {issue.title}
-          </a>
-          <span>{issue.labels.join(", ") || "No labels"}</span>
-        </li>
-      ))}
-    </ul>
+    <li className={blocked ? "issue-card blocked-issue" : "issue-card"}>
+      <a href={issue.url} rel="noreferrer" target="_blank">
+        #{issue.number} {issue.title}
+      </a>
+      <span>{issue.kind === "github_pull_request" ? "Pull request" : "Issue"}</span>
+      <span>{issue.labels.join(", ") || "No labels"}</span>
+      <span>
+        {stepCount}/{project.settings.maxTaskSteps} steps
+      </span>
+    </li>
   );
 }
 
-function StageEligibilityBoard({ project }: { project: ClientWorkflowProject }) {
-  const stageIssues = getEligibleGitHubIssuesByStage(project);
+function DashboardSwimlanes({ project }: { project: ClientWorkflowProject }) {
+  const swimlanes = getGitHubIssueSwimlanes(project);
 
   return (
-    <section className="dashboard-panel" aria-label={`${project.title} stage issue eligibility`}>
+    <section className="dashboard-panel" aria-label={`${project.title} GitHub issue swimlanes`}>
       <div className="dashboard-panel-heading">
-        <p className="eyebrow">Stage eligibility</p>
-        <h4>GitHub work items by stage</h4>
+        <p className="eyebrow">Swimlanes</p>
+        <h4>GitHub issues by current stage</h4>
       </div>
-      <div className="stage-eligibility-grid">
-        {stageIssues.map(({ stage, issues }) => (
-          <article className="stage-eligibility-row" key={stage.id}>
-            <div>
-              <strong>
-                {stage.priority}. {stage.name}
-              </strong>
-              <p>
-                {stage.input
-                  ? `${stage.input.label || "Unlabeled"} / ${stage.input.status}`
-                  : "No upstream GitHub work item input"}
-              </p>
-            </div>
-            <DashboardMetric label="Eligible" value={issues.length} />
-            <IssueList issues={issues} />
-          </article>
+      <div className="swimlane-grid">
+        {swimlanes.map((lane) => (
+          <section className="swimlane" key={lane.id} aria-label={`${lane.title} swimlane`}>
+            <header>
+              <strong>{lane.title}</strong>
+              <span>{lane.issues.length}</span>
+            </header>
+            <p>{lane.description}</p>
+            {lane.issues.length > 0 ? (
+              <ul className="issue-list">
+                {lane.issues.map((issue) => (
+                  <IssueCard issue={issue} key={issue.id} project={project} />
+                ))}
+              </ul>
+            ) : (
+              <p className="muted-copy">No matching GitHub issues.</p>
+            )}
+          </section>
         ))}
       </div>
     </section>
@@ -716,6 +721,9 @@ function TaskLifespan({ audit }: { audit: WorkflowTaskAuditEvent[] }) {
 function ProjectDashboard({ project }: { project: ClientWorkflowProject }) {
   const activeCycles = getActiveManagerCycles(project);
   const failedCycles = getFailedManagerCycles(project);
+  const resourceCounts = workflowResourceCountsFromIssues(project);
+  const nextPrompt =
+    activeCycles.length > 0 ? null : buildManagerNextPrompt(project, resourceCounts);
   const eligibleIssueCount = project.githubIssueCache.issues.filter(
     (issue) =>
       issue.eligibleStageIds.length > 0 &&
@@ -754,7 +762,29 @@ function ProjectDashboard({ project }: { project: ClientWorkflowProject }) {
         <DashboardMetric label="Stale minutes" value={project.settings.staleAgentMinutes} />
       </div>
 
-      <StageEligibilityBoard project={project} />
+      <section className="dashboard-panel next-step-panel" aria-label={`${project.title} next manager step`}>
+        <div className="dashboard-panel-heading">
+          <p className="eyebrow">Next step</p>
+          <h4>
+            {activeCycles.length > 0
+              ? "Wait for active work"
+              : nextPrompt?.selectedStageName ?? "No eligible stage"}
+          </h4>
+        </div>
+        {activeCycles.length > 0 ? (
+          <p className="muted-copy">
+            BatonFlow will wait because cycle {activeCycles[0].id} is still running.
+          </p>
+        ) : (
+          <div className="next-step-copy">
+            <strong>{nextPrompt?.decision === "dispatch" ? "Dispatch" : "Stop"}</strong>
+            <span>{nextPrompt?.reason ?? "ready"}</span>
+            <p>{nextPrompt?.taskTitle ?? "Queue/refill cycle with no existing GitHub item selected."}</p>
+          </div>
+        )}
+      </section>
+
+      <DashboardSwimlanes project={project} />
 
       <section className="dashboard-panel" aria-label={`${project.title} active work`}>
         <div className="dashboard-panel-heading">
@@ -836,6 +866,8 @@ function ProjectCard({
   project: ClientWorkflowProject;
 }) {
   const [actionState, formAction] = useActionState(updateWorkflowProjectAction, initialActionState);
+  const [isOpen, setIsOpen] = useState(false);
+  const [mode, setMode] = useState<"dashboard" | "edit">("dashboard");
   const [title, setTitle] = useState(project.title);
   const [objective, setObjective] = useState(project.objective);
   const [globalInstructionsMarkdown, setGlobalInstructionsMarkdown] = useState(
@@ -852,6 +884,13 @@ function ProjectCard({
     [globalInstructionsMarkdown, stages],
   );
   const priorityList = sortWorkflowStagesByPriority(stages);
+  const activeCycles = getActiveManagerCycles(project);
+  const failedCycles = getFailedManagerCycles(project);
+  const eligibleIssueCount = project.githubIssueCache.issues.filter(
+    (issue) =>
+      issue.eligibleStageIds.length > 0 &&
+      getTaskStepCount(project, githubIssueTaskKey(issue)) < project.settings.maxTaskSteps,
+  ).length;
 
   function updateStage(updatedStage: WorkflowStageDefinition) {
     setStages((currentStages) =>
@@ -872,26 +911,27 @@ function ProjectCard({
   }
 
   return (
-    <article className="project-card">
+    <article className={isOpen ? "project-card project-card-open" : "project-card"}>
       <div className="project-card-header">
         <div>
           <p className="eyebrow">Project</p>
           <h3>{project.title}</h3>
+          <p className="project-objective">{project.objective}</p>
         </div>
         <div className="project-card-actions">
-          <button type="button" className="secondary-button" onClick={copyManagerPrompt}>
-            {copyStatus}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              setIsOpen((current) => !current);
+              setMode("dashboard");
+            }}
+            aria-expanded={isOpen}
+          >
+            {isOpen ? "Collapse" : "Open"}
           </button>
-          <form action={rotateManagerAccessTokenAction}>
-            <input name="projectId" type="hidden" value={project.id} />
-            <button type="submit" className="secondary-button">
-              Rotate token
-            </button>
-          </form>
         </div>
       </div>
-
-      <p className="project-objective">{project.objective}</p>
 
       <div className="priority-strip" aria-label={`${project.title} agent priority`}>
         {priorityList.map((stage) => (
@@ -901,107 +941,154 @@ function ProjectCard({
         ))}
       </div>
 
-      <ProjectDashboard project={project} />
+      <div className="project-card-summary" aria-label={`${project.title} summary`}>
+        <DashboardMetric label="Repository" value={repositoryLabel(project)} />
+        <DashboardMetric label="Stages" value={project.stages.length} />
+        <DashboardMetric label="Eligible" value={eligibleIssueCount} />
+        <DashboardMetric label="Active" value={activeCycles.length} />
+        <DashboardMetric label="Review" value={failedCycles.length} />
+      </div>
 
-      <details className="manager-prompt-preview">
-        <summary>Manager prompt</summary>
-        <textarea
-          readOnly
-          rows={8}
-          value={managerPrompt || "Rotate the manager token before copying this prompt."}
-        />
-      </details>
-
-      <form action={formAction} className="project-form compact-project-form">
-        <input name="projectId" type="hidden" value={project.id} />
-        <input name="workflowConfig" type="hidden" value={config} />
-        <div className="form-grid">
-          <label>
-            <span>Project name</span>
-            <input name="title" value={title} onChange={(event) => setTitle(event.target.value)} required />
-          </label>
-          <label>
-            <span>Overall objective</span>
-            <textarea
-              name="objective"
-              value={objective}
-              onChange={(event) => setObjective(event.target.value)}
-              required
-              rows={4}
-            />
-          </label>
-        </div>
-
-        <fieldset className="rule-fieldset">
-          <legend>GitHub repository</legend>
-          <RepositoryPicker
-            currentRepositoryFullName={
-              project.repository?.fullName ?? (project.repository ? repositoryLabel(project) : null)
-            }
-            disabled={!githubConnection || githubRepositories.length === 0}
-            repositories={githubRepositories}
-          />
-        </fieldset>
-
-        <fieldset className="rule-fieldset">
-          <legend>Safety limits</legend>
-          <div className="compact-grid">
-            <label>
-              <span>Max task steps</span>
-              <input defaultValue={project.settings.maxTaskSteps} min={1} name="maxTaskSteps" type="number" />
-            </label>
-            <label>
-              <span>Stale after minutes</span>
-              <input
-                defaultValue={project.settings.staleAgentMinutes}
-                min={1}
-                name="staleAgentMinutes"
-                type="number"
-              />
-            </label>
+      {isOpen ? (
+        <div className="project-card-body">
+          <div className="project-mode-bar" aria-label={`${project.title} view mode`}>
+            <button
+              type="button"
+              className={mode === "dashboard" ? "mode-button active" : "mode-button"}
+              onClick={() => setMode("dashboard")}
+            >
+              Dashboard
+            </button>
+            <button
+              type="button"
+              className={mode === "edit" ? "mode-button active" : "mode-button"}
+              onClick={() => setMode("edit")}
+            >
+              Edit
+            </button>
+            <button type="button" className="secondary-button" onClick={copyManagerPrompt}>
+              {copyStatus}
+            </button>
+            <form action={rotateManagerAccessTokenAction}>
+              <input name="projectId" type="hidden" value={project.id} />
+              <button type="submit" className="secondary-button">
+                Rotate token
+              </button>
+            </form>
           </div>
-        </fieldset>
 
-        <label className="markdown-editor">
-          <span>global-instructions.md</span>
-          <textarea
-            value={globalInstructionsMarkdown}
-            onChange={(event) => setGlobalInstructionsMarkdown(event.target.value)}
-            rows={7}
-          />
-        </label>
+          {mode === "dashboard" ? (
+            <>
+              <ProjectDashboard project={project} />
 
-        <div className="stage-stack">
-          {stages.map((stage) => (
-            <StageEditor
-              canRemove={stages.length > 1}
-              key={stage.id}
-              onChange={updateStage}
-              onRemove={() =>
-                setStages((currentStages) => currentStages.filter((item) => item.id !== stage.id))
-              }
-              stage={stage}
-            />
-          ))}
+              <details className="manager-prompt-preview">
+                <summary>Manager prompt</summary>
+                <textarea
+                  readOnly
+                  rows={8}
+                  value={managerPrompt || "Rotate the manager token before copying this prompt."}
+                />
+              </details>
+            </>
+          ) : (
+            <form action={formAction} className="project-form compact-project-form">
+              <input name="projectId" type="hidden" value={project.id} />
+              <input name="workflowConfig" type="hidden" value={config} />
+              <div className="form-grid">
+                <label>
+                  <span>Project name</span>
+                  <input name="title" value={title} onChange={(event) => setTitle(event.target.value)} required />
+                </label>
+                <label>
+                  <span>Overall objective</span>
+                  <textarea
+                    name="objective"
+                    value={objective}
+                    onChange={(event) => setObjective(event.target.value)}
+                    required
+                    rows={4}
+                  />
+                </label>
+              </div>
+
+              <fieldset className="rule-fieldset">
+                <legend>GitHub repository</legend>
+                <RepositoryPicker
+                  currentRepositoryFullName={
+                    project.repository?.fullName ?? (project.repository ? repositoryLabel(project) : null)
+                  }
+                  disabled={!githubConnection || githubRepositories.length === 0}
+                  repositories={githubRepositories}
+                />
+              </fieldset>
+
+              <fieldset className="rule-fieldset">
+                <legend>Safety limits</legend>
+                <div className="compact-grid">
+                  <label>
+                    <span>Max task steps</span>
+                    <input defaultValue={project.settings.maxTaskSteps} min={1} name="maxTaskSteps" type="number" />
+                  </label>
+                  <label>
+                    <span>Stale after minutes</span>
+                    <input
+                      defaultValue={project.settings.staleAgentMinutes}
+                      min={1}
+                      name="staleAgentMinutes"
+                      type="number"
+                    />
+                  </label>
+                </div>
+              </fieldset>
+
+              <label className="markdown-editor">
+                <span>global-instructions.md</span>
+                <textarea
+                  value={globalInstructionsMarkdown}
+                  onChange={(event) => setGlobalInstructionsMarkdown(event.target.value)}
+                  rows={7}
+                />
+              </label>
+
+              <div className="stage-stack">
+                {stages.map((stage) => (
+                  <StageEditor
+                    canRemove={stages.length > 1}
+                    key={stage.id}
+                    onChange={updateStage}
+                    onRemove={() =>
+                      setStages((currentStages) => currentStages.filter((item) => item.id !== stage.id))
+                    }
+                    stage={stage}
+                  />
+                ))}
+              </div>
+
+              <div className="form-actions split-actions">
+                <button type="submit" className="danger-button" formAction={deleteWorkflowProjectAction}>
+                  Delete project
+                </button>
+                <div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      setStages((currentStages) => [...currentStages, createStage(currentStages.length + 1)])
+                    }
+                  >
+                    Add stage
+                  </button>
+                  <button type="submit" className="primary-button">
+                    Save project
+                  </button>
+                </div>
+              </div>
+              {actionState.error ? <p className="form-error">{actionState.error}</p> : null}
+              {actionState.message ? <p className="form-success">{actionState.message}</p> : null}
+            </form>
+          )}
         </div>
-
-        <div className="form-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() =>
-              setStages((currentStages) => [...currentStages, createStage(currentStages.length + 1)])
-            }
-          >
-            Add stage
-          </button>
-          <button type="submit" className="primary-button">
-            Save project
-          </button>
-        </div>
-        {actionState.error ? <p className="form-error">{actionState.error}</p> : null}
-        {actionState.message ? <p className="form-success">{actionState.message}</p> : null}
-      </form>
+      ) : null}
     </article>
   );
 }

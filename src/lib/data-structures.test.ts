@@ -6,6 +6,7 @@ import {
   getActiveManagerCycles,
   getEligibleGitHubIssuesByStage,
   getFailedManagerCycles,
+  getGitHubIssueSwimlanes,
   getTaskStepCount,
   getWorkflowResourceSelectors,
   getStartStage,
@@ -374,6 +375,41 @@ describe("data structures helpers", () => {
       "github_issue:open:pending architecture": 1,
       "github_issue:open:pending implementation": 1,
     });
+  });
+
+  it("groups GitHub issues into stage swimlanes with unmatched issues last", () => {
+    const swimlaneProject: WorkflowProject = {
+      ...workflowProject,
+      githubIssueCache: {
+        ...workflowProject.githubIssueCache,
+        issues: [
+          ...workflowProject.githubIssueCache.issues,
+          {
+            id: "issue-3",
+            number: 3,
+            title: "Needs triage",
+            url: "https://github.com/jonhickman5/BatonFlow/issues/3",
+            state: "open",
+            labels: ["Question"],
+            assignees: [],
+            createdAt: "2026-06-07T00:00:00.000Z",
+            updatedAt: "2026-06-07T01:00:00.000Z",
+            eligibleStageIds: [],
+          },
+        ],
+      },
+    };
+    const lanes = getGitHubIssueSwimlanes(swimlaneProject);
+
+    expect(lanes.map((lane) => lane.title)).toEqual([
+      "Implementation",
+      "Architecture",
+      "Planning",
+      "Unmatched",
+    ]);
+    expect(lanes.find((lane) => lane.title === "Implementation")?.issues.map((issue) => issue.number)).toEqual([2]);
+    expect(lanes.find((lane) => lane.title === "Architecture")?.issues.map((issue) => issue.number)).toEqual([1]);
+    expect(lanes.find((lane) => lane.title === "Unmatched")?.issues.map((issue) => issue.number)).toEqual([3]);
   });
 
   it("derives GitHub pull request eligibility and resource counts from cached items", () => {

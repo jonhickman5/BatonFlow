@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { SignedInHome } from "@/app/home-ui";
 import {
+  applyIssueEligibilityToProject,
   type GitHubRepositorySummary,
+  type GitHubAccountConnection,
+  type WorkflowProject,
   sanitizeGitHubConnectionForClient,
   sanitizeWorkflowProjectForClient,
 } from "@/lib/data-structures";
 import { getAuthStore } from "@/lib/auth-store";
-import { fetchGitHubRepositories, getGitHubOAuthConfig } from "@/lib/github";
+import { fetchGitHubIssues, fetchGitHubRepositories, getGitHubOAuthConfig } from "@/lib/github";
 import { getProjectStore } from "@/lib/project-store";
 import { getCurrentUser } from "@/lib/session";
 
@@ -51,6 +54,67 @@ export function PublicLanding() {
   );
 }
 
+function projectWithDisplaySyncError(project: WorkflowProject, message: string): WorkflowProject {
+  return applyIssueEligibilityToProject({
+    ...project,
+    githubIssueCache: {
+      issues: [],
+      syncedAt: project.githubIssueCache.syncedAt,
+      error: message,
+    },
+    repository: project.repository
+      ? {
+          ...project.repository,
+          syncError: message,
+        }
+      : null,
+  });
+}
+
+async function refreshProjectsForDisplay(
+  projects: WorkflowProject[],
+  githubConnection: GitHubAccountConnection | null,
+): Promise<WorkflowProject[]> {
+  return Promise.all(
+    projects.map(async (project) => {
+      if (!project.repository) {
+        return project;
+      }
+
+      if (!githubConnection) {
+        return projectWithDisplaySyncError(
+          project,
+          "Connect your GitHub account to refresh repository issues.",
+        );
+      }
+
+      try {
+        const issues = await fetchGitHubIssues(project.repository, githubConnection.accessToken);
+        const now = new Date().toISOString();
+
+        return applyIssueEligibilityToProject({
+          ...project,
+          githubIssueCache: {
+            issues,
+            syncedAt: now,
+            error: null,
+          },
+          repository: {
+            ...project.repository,
+            lastSyncedAt: now,
+            syncError: null,
+          },
+        });
+      } catch (error) {
+        return projectWithDisplaySyncError(
+          project,
+          error instanceof Error ? error.message : "Could not refresh GitHub issues.",
+        );
+      }
+    }),
+  );
+}
+
 export default async function Home() {
   const user = await getCurrentUser();
 
@@ -60,8 +124,12 @@ export default async function Home() {
 
   const projectStore = getProjectStore();
   await projectStore.markStaleManagerCyclesForOwner(user.id);
-  const projects = await projectStore.listProjects(user.id);
-  const githubConnection = await getAuthStore().getGitHubConnection(user.id);
+  const authStore = getAuthStore();
+  const githubConnection = await authStore.getGitHubConnection(user.id);
+  const projects = await refreshProjectsForDisplay(
+    await projectStore.listProjects(user.id),
+    githubConnection,
+  );
   let githubRepositories: GitHubRepositorySummary[] = [];
   let githubRepositoryError: string | null = null;
 

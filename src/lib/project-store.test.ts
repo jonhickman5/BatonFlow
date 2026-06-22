@@ -297,6 +297,61 @@ describe("JsonFileProjectStore", () => {
     expect(updatedProject.settings.maxTaskSteps).toBe(8);
   });
 
+  it("deletes only projects owned by the requesting user", async () => {
+    const { store } = await createStore();
+    const ownedProject = await store.createProject({
+      ownerUserId: "user-1",
+      title: "Owned",
+      objective: "Delete this one.",
+      globalInstructionsMarkdown: "# Global",
+      stages: [stageInput()],
+    });
+    const otherProject = await store.createProject({
+      ownerUserId: "user-2",
+      title: "Other",
+      objective: "Keep this one.",
+      globalInstructionsMarkdown: "# Global",
+      stages: [stageInput()],
+    });
+
+    await expect(store.deleteProject("user-2", ownedProject.id)).rejects.toThrow("Project not found.");
+    await store.deleteProject("user-1", ownedProject.id);
+
+    await expect(store.listProjects("user-1")).resolves.toEqual([]);
+    await expect(store.listProjects("user-2")).resolves.toMatchObject([{ id: otherProject.id }]);
+  });
+
+  it("deletes all projects for an owner", async () => {
+    const { store } = await createStore();
+
+    await store.createProject({
+      ownerUserId: "user-1",
+      title: "One",
+      objective: "Delete this.",
+      globalInstructionsMarkdown: "# Global",
+      stages: [stageInput()],
+    });
+    await store.createProject({
+      ownerUserId: "user-1",
+      title: "Two",
+      objective: "Delete this too.",
+      globalInstructionsMarkdown: "# Global",
+      stages: [stageInput()],
+    });
+    await store.createProject({
+      ownerUserId: "user-2",
+      title: "Other",
+      objective: "Keep this.",
+      globalInstructionsMarkdown: "# Global",
+      stages: [stageInput()],
+    });
+
+    await store.deleteProjectsForOwner("user-1");
+
+    await expect(store.listProjects("user-1")).resolves.toEqual([]);
+    await expect(store.listProjects("user-2")).resolves.toHaveLength(1);
+  });
+
   it("rejects partial GitHub repository configuration", async () => {
     const { store } = await createStore();
 

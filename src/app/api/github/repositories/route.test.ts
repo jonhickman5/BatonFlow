@@ -66,6 +66,7 @@ describe("GET /api/github/repositories", () => {
     vi.mocked(getAuthStore).mockReturnValue({
       findUserByNormalizedEmail: vi.fn(),
       createUser: vi.fn(),
+      deleteUser: vi.fn(),
       createSession: vi.fn(),
       findSessionByTokenHash: vi.fn(),
       deleteSessionByTokenHash: vi.fn(),

@@ -72,6 +72,18 @@ npm run verify
 The verification script runs linting, TypeScript checks, Prisma schema
 validation, unit tests with a 90% coverage threshold, and Playwright e2e tests.
 
+The default Playwright suite is hermetic and uses local JSON stores under
+`.data/e2e`. To run the opt-in live GitHub workflow test against a disposable
+repository, authenticate the GitHub CLI or set `E2E_GITHUB_TOKEN`, then run:
+
+```bash
+E2E_ALLOW_MUTATING_GITHUB=true E2E_GITHUB_REPOSITORY=jonhickman5/scrap npm run test:e2e:live-github
+```
+
+The live test creates and closes one issue in the configured repository, uses
+the exact `Pending Doing` and `Pending Review` labels, and skips if that
+repository already has open issues with those labels.
+
 ## Documentation
 
 - [Data Structures](docs/data-structures.md)
