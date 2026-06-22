@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isValidAccountEmail, normalizeAccountEmail } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { AuthStoreUnavailableError, getAuthStore } from "@/lib/auth-store";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 export async function GET(request: Request) {
@@ -17,10 +17,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Too many requests." }, { status: 429 });
   }
 
-  const user = await prisma.userAccount.findUnique({
-    where: { normalizedEmail },
-    select: { id: true },
-  });
+  try {
+    const user = await getAuthStore().findUserByNormalizedEmail(normalizedEmail);
 
-  return NextResponse.json({ exists: Boolean(user) });
+    return NextResponse.json({ exists: Boolean(user) });
+  } catch (error) {
+    if (error instanceof AuthStoreUnavailableError) {
+      return NextResponse.json({ exists: false, unavailable: true });
+    }
+
+    throw error;
+  }
 }

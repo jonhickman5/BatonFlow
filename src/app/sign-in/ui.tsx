@@ -16,6 +16,7 @@ export function AuthPanel() {
   const [emailTouched, setEmailTouched] = useState(false);
   const [emailExists, setEmailExists] = useState(false);
   const [emailCheckPending, setEmailCheckPending] = useState(false);
+  const [emailCheckUnavailable, setEmailCheckUnavailable] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [displayNameTouched, setDisplayNameTouched] = useState(false);
   const [password, setPassword] = useState("");
@@ -29,6 +30,7 @@ export function AuthPanel() {
   const visibleDisplayName = displayNameTouched ? displayName : email;
   const visibleEmailExists = shouldCheckEmail && emailExists;
   const visibleEmailCheckPending = shouldCheckEmail && emailCheckPending;
+  const visibleEmailCheckUnavailable = shouldCheckEmail && emailCheckUnavailable;
 
   useEffect(() => {
     if (!shouldCheckEmail) {
@@ -44,12 +46,14 @@ export function AuthPanel() {
           `/api/users/email-exists?email=${encodeURIComponent(normalizedEmail)}`,
           { signal: controller.signal },
         );
-        const data = (await response.json()) as { exists?: boolean };
+        const data = (await response.json()) as { exists?: boolean; unavailable?: boolean };
 
         setEmailExists(Boolean(data.exists));
+        setEmailCheckUnavailable(Boolean(data.unavailable));
       } catch {
         if (!controller.signal.aborted) {
           setEmailExists(false);
+          setEmailCheckUnavailable(true);
         }
       } finally {
         if (!controller.signal.aborted) {
@@ -71,6 +75,7 @@ export function AuthPanel() {
     setConfirmTouched(false);
     setEmailExists(false);
     setEmailCheckPending(false);
+    setEmailCheckUnavailable(false);
     setEmailTouched(false);
   }
 
@@ -168,15 +173,27 @@ export function AuthPanel() {
                   onChange={(event) => {
                     setEmailTouched(true);
                     setEmail(event.target.value);
+                    setEmailCheckUnavailable(false);
                   }}
-                  aria-invalid={visibleEmailExists}
-                  aria-describedby={visibleEmailExists ? "email-exists-error" : undefined}
+                  aria-invalid={visibleEmailExists || visibleEmailCheckUnavailable}
+                  aria-describedby={
+                    visibleEmailExists
+                      ? "email-exists-error"
+                      : visibleEmailCheckUnavailable
+                        ? "email-check-error"
+                        : undefined
+                  }
                   required
                 />
               </label>
               {visibleEmailExists ? (
                 <p className="form-error live-error" id="email-exists-error">
                   An account with this email already exists.
+                </p>
+              ) : null}
+              {visibleEmailCheckUnavailable ? (
+                <p className="form-error live-error" id="email-check-error">
+                  Account storage is unavailable. Check the local store or database connection.
                 </p>
               ) : null}
               <label>
@@ -228,7 +245,12 @@ export function AuthPanel() {
               <button
                 type="submit"
                 className="primary-button full-width"
-                disabled={passwordMismatch || visibleEmailExists || visibleEmailCheckPending}
+                disabled={
+                  passwordMismatch ||
+                  visibleEmailExists ||
+                  visibleEmailCheckPending ||
+                  visibleEmailCheckUnavailable
+                }
               >
                 Create account
               </button>
